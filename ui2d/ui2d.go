@@ -66,6 +66,7 @@ func loadTextureIndex() {
 }
 
 func init() {
+
 	sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
 	err := sdl.Init(sdl.INIT_EVERYTHING)
 	if err != nil {
@@ -93,8 +94,8 @@ func init() {
 	loadTextureIndex()
 }
 
-func (*UI2d) Draw(level *game.Level) {
-	rand.Seed(1992)
+func (ui *UI2d) Draw(level *game.Level) {
+	rand.Seed(1992) // needs to be called everytime before rendering with random tiles
 
 	if centerX == -1 && centerY == -1 {
 		centerX = level.Player.X
@@ -118,25 +119,45 @@ func (*UI2d) Draw(level *game.Level) {
 	offsetX := (winWidth / 2) - (centerX * 32)
 	offsetY := (winHeight / 2) - (centerY * 32)
 	renderer.Clear()
-	drawLevel(level, true, offsetX, offsetY)
-	drawLevel(level, false, offsetX, offsetY)
+	drawFloor(level, offsetX, offsetY)
+	drawLevel(level, offsetX, offsetY)
 
 	// Player tile 13, 51
 	renderer.Copy(textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + offsetX, Y: level.Player.Y*32 + offsetY, W: 32, H: 32})
 	renderer.Present()
 
 	sdl.Delay(10)
-
 }
 
 // drawLevel receives a level from the game and then renders the tiles row by row
 // if floor only is true, all tiles that are not Empty are drawn as dirt floor
-func drawLevel(level *game.Level, floorOnly bool, offsetX, offsetY int32) {
+func drawLevel(level *game.Level, offsetX, offsetY int32) {
 	for y, row := range level.Zone {
 		for x, tile := range row {
 			if tile != game.Empty {
-				if floorOnly {tile = game.DirtFloor}
+				if tile == game.DirtFloor {continue}
 				srcs := textureIndex[tile]
+				src := srcs[rand.Intn(len(srcs))]
+				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
+
+				pos := game.Pos{int32(x),int32(y)}
+				if level.Debug[pos] {
+					textureAtlas.SetColorMod(128, 0, 0)
+				} else {
+					textureAtlas.SetColorMod(255,255, 255)
+				}
+
+				renderer.Copy(textureAtlas, &src, &dst)
+			}
+		}
+	}
+}
+
+func drawFloor(level *game.Level, offsetX, offsetY int32) {
+	for y, row := range level.Zone {
+		for x, tile := range row {
+			if tile == game.DirtFloor || tile == game.OpenDoor || tile == game.ClosedDoor {
+				srcs := textureIndex[game.DirtFloor]
 				src := srcs[rand.Intn(len(srcs))]
 				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
 

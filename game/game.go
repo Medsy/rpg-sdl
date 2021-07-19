@@ -245,7 +245,6 @@ func astar(ui GameUI, level *Level, start Pos, goal Pos) []Pos {
 			for _, pos := range path {
 				level.Debug[pos] = true
 				ui.Draw(level)
-				ui.Draw(level)
 			}
 
 			return path
