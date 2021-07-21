@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sort"
 )
 
 type GameUI interface {
@@ -24,8 +23,12 @@ const (
 	Quit
 )
 
+var OffsetX int32
+var OffsetY int32
+
 type Input struct {
 	Typ InputType
+	MousePos Pos
 }
 
 type Tile rune
@@ -37,6 +40,11 @@ const (
 	ClosedDoor  Tile = '|'
 	OpenDoor  	Tile = '/'
 	Empty       Tile = 0
+)
+
+var (
+	CenterY int32 = -1
+	CenterX int32 = -1
 )
 
 type Pos struct {
@@ -61,12 +69,6 @@ type priorityPos struct {
 	Pos
 	priority int
 }
-
-type priorityArray []priorityPos
-func (p priorityArray) Len() int {return len(p)}
-func (p priorityArray) Swap(i, j int) {p[i], p[j] = p[j], p[i]}
-func (p priorityArray) Less(i, j int) bool { return p[i].priority < p[j].priority}
-
 
 func loadLevelFromFile(filename string) *Level {
 	file, err := os.Open(filename)
@@ -167,7 +169,7 @@ func handleInput(ui GameUI, level *Level, input *Input)  {
 			checkDoor(level, Pos{p.X+1, p.Y})
 		}
 	case Search:
-		astar(ui, level, p.Pos, Pos{16 ,15})
+		astar(ui, level, p.Pos, input.MousePos)
 	case None:
 		break
 	}
@@ -217,8 +219,12 @@ func getNeighbours(level *Level, pos Pos) []Pos {
 }
 
 func astar(ui GameUI, level *Level, start Pos, goal Pos) []Pos {
-	edge := make(priorityArray, 0, 8)
-	edge = append(edge, priorityPos{start, 1})
+	goal.X, goal.Y = (goal.X - OffsetX) / 32, (goal.Y - OffsetY) / 32
+	fmt.Printf("{%d, %d}", OffsetX, OffsetY)
+	fmt.Println(goal)
+	//fmt.Println(level.Player.Pos)
+	edge := make(pqueue, 0, 8)
+	edge = edge.push(start, 1)
 	prevPos := make(map[Pos]Pos)
 	prevPos[start] = start
 	currentCost := make(map[Pos]int)
@@ -226,13 +232,13 @@ func astar(ui GameUI, level *Level, start Pos, goal Pos) []Pos {
 
 	level.Debug = make(map[Pos]bool)
 
+	var current Pos
 	for len(edge) > 0 {
-		sort.Stable(edge)
-		current := edge[0]
+		edge, current = edge.pop()
 
-		if current.Pos == goal {
+		if current == goal {
 			path := make([]Pos, 0)
-			p := current.Pos
+			p := current
 			for p != start {
 				path = append(path, p)
 				p = prevPos[p]
@@ -241,27 +247,27 @@ func astar(ui GameUI, level *Level, start Pos, goal Pos) []Pos {
 			for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
 				path[i], path[j] = path[j], path[i]
 			}
-
+			level.Debug = make(map[Pos]bool)
 			for _, pos := range path {
 				level.Debug[pos] = true
 				ui.Draw(level)
 			}
 
 			return path
-			break
 		}
 
-		edge = edge[1:]
-		for _, next := range getNeighbours(level, current.Pos) {
-			newCost := currentCost[current.Pos] + 1
+		for _, next := range getNeighbours(level, current) {
+			newCost := currentCost[current] + 1
 			_, exists := currentCost[next]
 			if !exists || newCost < currentCost[next] {
 				currentCost[next] = newCost
 				xDist := int(math.Abs(float64(goal.X - next.X)))
 				yDist := int(math.Abs(float64(goal.Y - next.Y)))
 				priority := newCost + xDist + yDist
-				edge = append(edge, priorityPos{next, priority})
-				prevPos[next] = current.Pos
+				edge = edge.push(next, priority)
+				level.Debug[next] = true
+				ui.Draw(level)
+				prevPos[next] = current
 
 			}
 		}

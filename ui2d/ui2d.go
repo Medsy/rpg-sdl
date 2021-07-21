@@ -20,7 +20,9 @@ var textureIndex map[game.Tile][]sdl.Rect
 
 var centerX, centerY int32 = -1, -1
 
+
 type UI2d struct {
+	MouseInput game.Pos
 }
 
 func loadTextureIndex() {
@@ -116,14 +118,14 @@ func (ui *UI2d) Draw(level *game.Level) {
 		centerY--
 	}
 
-	offsetX := (winWidth / 2) - (centerX * 32)
-	offsetY := (winHeight / 2) - (centerY * 32)
+	game.OffsetX = (winWidth / 2) - (centerX * 32)
+	game.OffsetY = (winHeight / 2) - (centerY * 32)
 	renderer.Clear()
-	drawFloor(level, offsetX, offsetY)
-	drawLevel(level, offsetX, offsetY)
+	drawFloor(level, game.OffsetX, game.OffsetY)
+	drawLevel(level, game.OffsetX, game.OffsetY)
 
 	// Player tile 13, 51
-	renderer.Copy(textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + offsetX, Y: level.Player.Y*32 + offsetY, W: 32, H: 32})
+	renderer.Copy(textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
 	renderer.Present()
 
 	sdl.Delay(10)
@@ -179,6 +181,14 @@ func (ui *UI2d) GetInput() *game.Input {
 		switch e := event.(type) {
 		case *sdl.QuitEvent:
 			return &game.Input{Typ: game.Quit}
+		case *sdl.MouseButtonEvent:
+			if e.State == sdl.PRESSED {
+				mousePos := game.Pos{X: e.X, Y: e.Y}
+				return &game.Input{
+					Typ: game.Search,
+					MousePos: mousePos,
+				}
+			}
 		case *sdl.KeyboardEvent:
 			if e.Type != sdl.KEYDOWN {
 				break
