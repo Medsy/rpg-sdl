@@ -12,21 +12,64 @@ import (
 	"strings"
 )
 
-const winWidth, winHeight = 1280, 720
-
-var renderer *sdl.Renderer
-var textureAtlas *sdl.Texture
-var textureIndex map[game.Tile][]sdl.Rect
-
-var centerX, centerY int32 = -1, -1
-
+type ui struct {
+	winWidth     int
+	winHeight    int
+	window       *sdl.Window
+	renderer     *sdl.Renderer
+	textureAtlas *sdl.Texture
+	textureIndex map[game.Tile][]sdl.Rect
+	centerX      int32
+	centerY      int32
+	offsetX      int32
+	offsetY      int32
+	levelChan    chan *game.Level
+	inputChan    chan *game.Input
+}
 
 type UI2d struct {
 	MouseInput game.Pos
 }
 
-func loadTextureIndex() {
-	textureIndex = make(map[game.Tile][]sdl.Rect)
+func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
+	ui := &ui{}
+	ui.inputChan = inputChan
+	ui.levelChan = levelChan
+	ui.winWidth = 1280
+	ui.winHeight = 720
+
+	sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
+	err := sdl.Init(sdl.INIT_EVERYTHING)
+	if err != nil {
+		panic(err)
+	}
+
+	ui.window, err = sdl.CreateWindow("rpg-sdl", 200, 200,
+		int32(ui.winWidth), int32(ui.winHeight), sdl.WINDOW_SHOWN)
+	if err != nil {
+		panic(err)
+	}
+
+	ui.renderer, err = sdl.CreateRenderer(ui.window, -1, sdl.RENDERER_ACCELERATED)
+	if err != nil {
+		panic(err)
+	}
+	sdl.SetHint(sdl.HINT_RENDER_SCALE_QUALITY, "1")
+
+	ui.textureAtlas, err = img.LoadTexture(ui.renderer, "ui2d/assets/tiles.png")
+	if err != nil {
+		panic(err)
+	}
+	ui.loadTextureIndex()
+
+	ui.centerX = -1
+	ui.centerY = -1
+
+	return ui
+}
+
+func (ui *ui) loadTextureIndex() {
+	ui.textureIndex = make(map[game.Tile][]sdl.Rect)
 	file, err := os.Open("ui2d/assets/atlas-index.txt")
 	if err != nil {
 		panic(err)
@@ -63,152 +106,145 @@ func loadTextureIndex() {
 			}
 		}
 
-		textureIndex[tileRune] = rects
+		ui.textureIndex[tileRune] = rects
+
 	}
 }
 
-func init() {
-
-	sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
-	err := sdl.Init(sdl.INIT_EVERYTHING)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	window, err := sdl.CreateWindow("rpg-sdl", 200, 200,
-		int32(winWidth), int32(winHeight), sdl.WINDOW_SHOWN)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	renderer, err = sdl.CreateRenderer(window, -1, sdl.RENDERER_ACCELERATED)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	sdl.SetHint(sdl.HINT_RENDER_SCALE_QUALITY, "1")
-
-	textureAtlas, err = img.LoadTexture(renderer, "ui2d/assets/tiles.png")
-	if err != nil {
-		panic(err)
-	}
-	loadTextureIndex()
-}
-
-func (ui *UI2d) Draw(level *game.Level) {
+func (ui *ui) Draw(level *game.Level) {
 	rand.Seed(1992) // needs to be called everytime before rendering with random tiles
 
-	if centerX == -1 && centerY == -1 {
-		centerX = level.Player.X
-		centerY = level.Player.Y
+	if ui.centerX == -1 && ui.centerY == -1 {
+		ui.centerX = level.Player.X
+		ui.centerY = level.Player.Y
 	}
 
 	threshold := int32(5)
-	if level.Player.X > centerX+threshold {
-		centerX++
+	if level.Player.X > ui.centerX+threshold {
+		ui.centerX++
 	}
-	if level.Player.X < centerX-threshold {
-		centerX--
+	if level.Player.X < ui.centerX-threshold {
+		ui.centerX--
 	}
-	if level.Player.Y > centerY+threshold {
-		centerY++
+	if level.Player.Y > ui.centerY+threshold {
+		ui.centerY++
 	}
-	if level.Player.Y < centerY-threshold {
-		centerY--
+	if level.Player.Y < ui.centerY-threshold {
+		ui.centerY--
 	}
 
-	game.OffsetX = (winWidth / 2) - (centerX * 32)
-	game.OffsetY = (winHeight / 2) - (centerY * 32)
-	renderer.Clear()
-	drawFloor(level, game.OffsetX, game.OffsetY)
-	drawLevel(level, game.OffsetX, game.OffsetY)
+	ui.offsetX = int32(ui.winWidth/2) - (ui.centerX * 32)
+	ui.offsetY = int32(ui.winHeight/2) - (ui.centerY * 32)
+	ui.renderer.Clear()
+	ui.drawFloor(level, ui.offsetX, ui.offsetY)
+	ui.drawLevel(level, ui.offsetX, ui.offsetY)
 
 	// Player tile 13, 51
-	renderer.Copy(textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
-	renderer.Present()
+	ui.renderer.Copy(ui.textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + ui.offsetX, Y: level.Player.Y*32 + ui.offsetY, W: 32, H: 32})
+	ui.renderer.Present()
 
 	sdl.Delay(10)
 }
 
 // drawLevel receives a level from the game and then renders the tiles row by row
 // if floor only is true, all tiles that are not Empty are drawn as dirt floor
-func drawLevel(level *game.Level, offsetX, offsetY int32) {
+func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int32) {
 	for y, row := range level.Zone {
 		for x, tile := range row {
 			if tile != game.Empty {
-				if tile == game.DirtFloor {continue}
-				srcs := textureIndex[tile]
+				if tile == game.DirtFloor {
+					continue
+				}
+				srcs := ui.textureIndex[tile]
 				src := srcs[rand.Intn(len(srcs))]
 				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
 
-				pos := game.Pos{int32(x),int32(y)}
+				pos := game.Pos{int32(x), int32(y)}
 				if level.Debug[pos] {
-					textureAtlas.SetColorMod(128, 0, 0)
+					ui.textureAtlas.SetColorMod(128, 0, 0)
 				} else {
-					textureAtlas.SetColorMod(255,255, 255)
+					ui.textureAtlas.SetColorMod(255, 255, 255)
 				}
 
-				renderer.Copy(textureAtlas, &src, &dst)
+				ui.renderer.Copy(ui.textureAtlas, &src, &dst)
 			}
 		}
 	}
 }
 
-func drawFloor(level *game.Level, offsetX, offsetY int32) {
+func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int32) {
 	for y, row := range level.Zone {
 		for x, tile := range row {
 			if tile == game.DirtFloor || tile == game.OpenDoor || tile == game.ClosedDoor {
-				srcs := textureIndex[game.DirtFloor]
+				srcs := ui.textureIndex[game.DirtFloor]
 				src := srcs[rand.Intn(len(srcs))]
 				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
 
-				pos := game.Pos{int32(x),int32(y)}
+				pos := game.Pos{int32(x), int32(y)}
 				if level.Debug[pos] {
-					textureAtlas.SetColorMod(128, 0, 0)
+					ui.textureAtlas.SetColorMod(128, 0, 0)
 				} else {
-					textureAtlas.SetColorMod(255,255, 255)
+					ui.textureAtlas.SetColorMod(255, 255, 255)
 				}
 
-				renderer.Copy(textureAtlas, &src, &dst)
+				ui.renderer.Copy(ui.textureAtlas, &src, &dst)
 			}
 		}
 	}
 }
 
-func (ui *UI2d) GetInput() *game.Input {
-	for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
-		switch e := event.(type) {
-		case *sdl.QuitEvent:
-			return &game.Input{Typ: game.Quit}
-		case *sdl.MouseButtonEvent:
-			if e.State == sdl.PRESSED {
-				mousePos := game.Pos{X: e.X, Y: e.Y}
-				return &game.Input{
-					Typ: game.Search,
-					MousePos: mousePos,
+func (ui *ui) GetInput() {
+	for {
+		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			switch e := event.(type) {
+			case *sdl.QuitEvent:
+				ui.inputChan <- &game.Input{Typ: game.QuitGame}
+			case *sdl.WindowEvent:
+				if e.Event == sdl.WINDOWEVENT_CLOSE {
+					ui.inputChan <- &game.Input{Typ: game.CloseWindow, LevelChan: ui.levelChan}
+				}
+			case *sdl.MouseButtonEvent:
+				if e.State == sdl.PRESSED {
+					mousePos := game.Pos{X: e.X, Y: e.Y}
+					ui.inputChan <- &game.Input{
+						Typ:      game.Search,
+						MousePos: mousePos,
+					}
+				}
+			case *sdl.KeyboardEvent:
+				if e.Type != sdl.KEYDOWN {
+					break
+				}
+				var key sdl.Keycode
+				switch key = e.Keysym.Sym; key {
+				case sdl.K_ESCAPE:
+					ui.inputChan <- &game.Input{Typ: game.QuitGame}
+					fmt.Println("quit")
+				case sdl.K_UP, sdl.K_w:
+					ui.inputChan <- &game.Input{Typ: game.Up}
+					fmt.Println("up")
+				case sdl.K_DOWN, sdl.K_s:
+					ui.inputChan <- &game.Input{Typ: game.Down}
+					fmt.Println("down")
+				case sdl.K_LEFT, sdl.K_a:
+					ui.inputChan <- &game.Input{Typ: game.Left}
+					fmt.Println("left")
+				case sdl.K_RIGHT, sdl.K_d:
+					ui.inputChan <- &game.Input{Typ: game.Right}
+					fmt.Println("right")
+				case sdl.K_SPACE:
+					ui.inputChan <- &game.Input{Typ: game.Search}
+					fmt.Println("space")
 				}
 			}
-		case *sdl.KeyboardEvent:
-			if e.Type != sdl.KEYDOWN {
-				break
-			}
-			var key sdl.Keycode
-			switch key = e.Keysym.Sym; key {
-			case sdl.K_ESCAPE:
-				return &game.Input{Typ: game.Quit}
-			case sdl.K_UP, sdl.K_w:
-				return &game.Input{Typ: game.Up}
-			case sdl.K_DOWN, sdl.K_s:
-				return &game.Input{Typ: game.Down}
-			case sdl.K_LEFT, sdl.K_a:
-				return &game.Input{Typ: game.Left}
-			case sdl.K_RIGHT, sdl.K_d:
-				return &game.Input{Typ: game.Right}
-			case sdl.K_SPACE:
-				return &game.Input{Typ: game.Search}
-			}
 		}
+		select {
+		case newLevel, ok := <-ui.levelChan:
+			if ok {
+				ui.Draw(newLevel)
+			}
+		default:
+		}
+		ui.inputChan <- &game.Input{Typ: game.None}
 	}
-	return &game.Input{Typ: game.None}
 }
