@@ -21,8 +21,6 @@ type ui struct {
 	textureIndex map[game.Tile][]sdl.Rect
 	centerX      int32
 	centerY      int32
-	offsetX      int32
-	offsetY      int32
 	levelChan    chan *game.Level
 	inputChan    chan *game.Input
 }
@@ -66,6 +64,12 @@ func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui.centerY = -1
 
 	return ui
+}
+
+func (ui *ui) QuitSDL() {
+	sdl.Quit()
+	ui.window.Destroy()
+	ui.renderer.Destroy()
 }
 
 func (ui *ui) loadTextureIndex() {
@@ -133,14 +137,14 @@ func (ui *ui) Draw(level *game.Level) {
 		ui.centerY--
 	}
 
-	ui.offsetX = int32(ui.winWidth/2) - (ui.centerX * 32)
-	ui.offsetY = int32(ui.winHeight/2) - (ui.centerY * 32)
+	game.OffsetX = int32(ui.winWidth/2) - (ui.centerX * 32)
+	game.OffsetY = int32(ui.winHeight/2) - (ui.centerY * 32)
 	ui.renderer.Clear()
-	ui.drawFloor(level, ui.offsetX, ui.offsetY)
-	ui.drawLevel(level, ui.offsetX, ui.offsetY)
+	ui.drawFloor(level, game.OffsetX, game.OffsetY)
+	ui.drawLevel(level, game.OffsetX, game.OffsetY)
 
 	// Player tile 13, 51
-	ui.renderer.Copy(ui.textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + ui.offsetX, Y: level.Player.Y*32 + ui.offsetY, W: 32, H: 32})
+	ui.renderer.Copy(ui.textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
 	ui.renderer.Present()
 
 	sdl.Delay(10)
@@ -196,12 +200,19 @@ func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int32) {
 func (ui *ui) GetInput() {
 	for {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			var input game.Input
 			switch e := event.(type) {
 			case *sdl.QuitEvent:
-				ui.inputChan <- &game.Input{Typ: game.QuitGame}
+				input.Typ = game.CloseWindow
+				input.LevelChan = ui.levelChan
+				ui.QuitSDL()
+				return
 			case *sdl.WindowEvent:
 				if e.Event == sdl.WINDOWEVENT_CLOSE {
-					ui.inputChan <- &game.Input{Typ: game.CloseWindow, LevelChan: ui.levelChan}
+					input.Typ = game.CloseWindow
+					input.LevelChan = ui.levelChan
+					ui.QuitSDL()
+					return
 				}
 			case *sdl.MouseButtonEvent:
 				if e.State == sdl.PRESSED {
@@ -218,24 +229,30 @@ func (ui *ui) GetInput() {
 				var key sdl.Keycode
 				switch key = e.Keysym.Sym; key {
 				case sdl.K_ESCAPE:
-					ui.inputChan <- &game.Input{Typ: game.QuitGame}
+					input.Typ = game.CloseWindow
+					input.LevelChan = ui.levelChan
+					ui.QuitSDL()
 					fmt.Println("quit")
+					return
 				case sdl.K_UP, sdl.K_w:
-					ui.inputChan <- &game.Input{Typ: game.Up}
+					input.Typ = game.Up
 					fmt.Println("up")
 				case sdl.K_DOWN, sdl.K_s:
-					ui.inputChan <- &game.Input{Typ: game.Down}
+					input.Typ = game.Down
 					fmt.Println("down")
 				case sdl.K_LEFT, sdl.K_a:
-					ui.inputChan <- &game.Input{Typ: game.Left}
+					input.Typ = game.Left
 					fmt.Println("left")
 				case sdl.K_RIGHT, sdl.K_d:
-					ui.inputChan <- &game.Input{Typ: game.Right}
+					input.Typ = game.Right
 					fmt.Println("right")
 				case sdl.K_SPACE:
-					ui.inputChan <- &game.Input{Typ: game.Search}
+					input.Typ = game.Search
 					fmt.Println("space")
 				}
+			}
+			if input.Typ != game.None {
+				ui.inputChan <- &input
 			}
 		}
 		select {
@@ -245,6 +262,5 @@ func (ui *ui) GetInput() {
 			}
 		default:
 		}
-		ui.inputChan <- &game.Input{Typ: game.None}
 	}
 }
