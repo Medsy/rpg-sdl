@@ -146,8 +146,6 @@ func (ui *ui) Draw(level *game.Level) {
 	// Player tile 13, 51
 	ui.renderer.Copy(ui.textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
 	ui.renderer.Present()
-
-	sdl.Delay(10)
 }
 
 // drawLevel receives a level from the game and then renders the tiles row by row
@@ -262,5 +260,6 @@ func (ui *ui) GetInput() {
 			}
 		default:
 		}
+		sdl.Delay(16)
 	}
 }

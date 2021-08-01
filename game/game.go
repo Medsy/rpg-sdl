@@ -27,9 +27,9 @@ const (
 )
 
 type Input struct {
-	Typ      InputType
-	MousePos Pos
-	LevelChan    chan *Level
+	Typ       InputType
+	MousePos  Pos
+	LevelChan chan *Level
 }
 
 var OffsetX int32
@@ -38,11 +38,13 @@ var OffsetY int32
 type Tile rune
 
 const (
-	Character1 Tile = 'P'
+	PlayerTile Tile = '@'
 	StoneWall  Tile = '#'
 	DirtFloor  Tile = '.'
 	ClosedDoor Tile = '|'
 	OpenDoor   Tile = '/'
+	Rat        Tile = 'R'
+	Spider     Tile = 'S'
 	Empty      Tile = 0
 )
 
@@ -59,9 +61,10 @@ type Player struct {
 }
 
 type Level struct {
-	Zone   [][]Tile
-	Player Player
-	Debug  map[Pos]bool
+	Zone     [][]Tile
+	Player   Player
+	Monsters map[Pos]*Monster
+	Debug    map[Pos]bool
 }
 
 type priorityPos struct {
@@ -100,6 +103,7 @@ func loadLevelFromFile(filename string) *Level {
 		index++
 	}
 	level.Zone = make([][]Tile, len(zoneRows))
+	level.Monsters = make(map[Pos]*Monster)
 
 	for i := range level.Zone {
 		level.Zone[i] = make([]Tile, longestRow)
@@ -119,10 +123,16 @@ func loadLevelFromFile(filename string) *Level {
 				t = ClosedDoor
 			case '/':
 				t = OpenDoor
-			case 'P':
+			case '@':
 				level.Player.X = int32(x)
 				level.Player.Y = int32(y)
 				t = DirtFloor
+			case 'R':
+				level.Monsters[Pos{int32(x), int32(y)}] = NewRat()
+				t = Rat
+			case 'S':
+				level.Monsters[Pos{int32(x), int32(y)}] = NewSpider()
+				t = Spider
 			default:
 				panic(fmt.Sprintf("Invalid rune '%s' in map at position [%d,%d]", string(r), y+1, x+1))
 			}
@@ -136,7 +146,7 @@ func loadLevelFromFile(filename string) *Level {
 func canWalk(level *Level, pos Pos) bool {
 	t := level.Zone[pos.Y][pos.X]
 	switch t {
-	case StoneWall, ClosedDoor, Empty:
+	case StoneWall, Empty:
 		return false
 	default:
 		return true
@@ -179,7 +189,13 @@ func (g *Game) handleInput(input *Input) {
 			checkDoor(level, Pos{p.X + 1, p.Y})
 		}
 	case Search:
-		g.astar(p.Pos, input.MousePos)
+		pos := screenToWorldPos(input.MousePos)
+		t := g.getTileAtPos(pos)
+		if t == DirtFloor {
+			g.astar(p.Pos, input.MousePos)
+		} else if t == ClosedDoor {
+			level.Zone[pos.Y][pos.X] = OpenDoor
+		}
 	case CloseWindow:
 		close(input.LevelChan)
 		chanIndex := 0
@@ -217,10 +233,8 @@ func (g *Game) bfsearch(start Pos) {
 
 func (g *Game) astar(start Pos, goal Pos) []Pos {
 	level := g.Level
-	goal.X, goal.Y = (goal.X-OffsetX)/32, (goal.Y-OffsetY)/32
-	fmt.Printf("{%d, %d}", OffsetX, OffsetY)
-	fmt.Println(goal)
-	//fmt.Println(level.Player.Pos)
+	goal = screenToWorldPos(goal)
+	fmt.Printf("start: {%d, %d}\ngoal: {%d, %d}\n", start.X, start.Y, goal.X, goal.Y)
 	edge := make(pqueue, 0, 8)
 	edge = edge.push(start, 1)
 	prevPos := make(map[Pos]Pos)
@@ -254,7 +268,10 @@ func (g *Game) astar(start Pos, goal Pos) []Pos {
 		}
 
 		for _, next := range getNeighbours(level, current) {
-			newCost := currentCost[current] + 1
+			var cost = 1
+			t := g.getTileAtPos(next)
+			if t == ClosedDoor {cost = 4}
+			newCost := currentCost[current] + cost
 			_, exists := currentCost[next]
 			if !exists || newCost < currentCost[next] {
 				currentCost[next] = newCost
@@ -264,7 +281,7 @@ func (g *Game) astar(start Pos, goal Pos) []Pos {
 				edge = edge.push(next, priority)
 				level.Debug[next] = true
 				prevPos[next] = current
-
+				fmt.Printf("{%d, %d} to {%d, %d} cost: %d\n",current.X, current.Y, next.X, next.Y, newCost)
 			}
 		}
 	}
@@ -293,6 +310,14 @@ func getNeighbours(level *Level, pos Pos) []Pos {
 	}
 
 	return neighbours
+}
+
+func (g *Game) getTileAtPos(pos Pos) Tile {
+	return g.Level.Zone[pos.Y][pos.X]
+}
+
+func screenToWorldPos(pos Pos) Pos {
+	return Pos{(pos.X-OffsetX)/32, (pos.Y-OffsetY)/32}
 }
 
 func (g *Game) Run() {
