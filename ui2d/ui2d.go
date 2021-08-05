@@ -18,7 +18,7 @@ type ui struct {
 	window       *sdl.Window
 	renderer     *sdl.Renderer
 	textureAtlas *sdl.Texture
-	textureIndex map[game.Tile][]sdl.Rect
+	textureIndex map[rune][]sdl.Rect
 	centerX      int32
 	centerY      int32
 	levelChan    chan *game.Level
@@ -73,7 +73,7 @@ func (ui *ui) QuitSDL() {
 }
 
 func (ui *ui) loadTextureIndex() {
-	ui.textureIndex = make(map[game.Tile][]sdl.Rect)
+	ui.textureIndex = make(map[rune][]sdl.Rect)
 	file, err := os.Open("ui2d/assets/atlas-index.txt")
 	if err != nil {
 		panic(err)
@@ -83,7 +83,7 @@ func (ui *ui) loadTextureIndex() {
 	for scanner.Scan() {
 		line := scanner.Text()
 		line = strings.TrimSpace(line)
-		tileRune := game.Tile(line[0])
+		tileRune := rune(line[0])
 
 		xy := line[1:]
 		splitXYC := strings.Split(xy, ",")
@@ -151,14 +151,18 @@ func (ui *ui) Draw(level *game.Level) {
 // drawLevel receives a level from the game and then renders the tiles row by row
 // if floor only is true, all tiles that are not Empty are drawn as dirt floor
 func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int32) {
+	var currentPos game.Pos
 	for y, row := range level.Zone {
-		for x, tile := range row {
-			if tile != game.Empty {
-				if tile == game.DirtFloor {
+		for x, tile := range row { // TODO: replace tile
+			currentPos = game.Pos{X: int32(x), Y: int32(y)}
+			if tile.Rune != game.Empty {
+				if tile.Rune == game.DirtFloor {
 					continue
 				}
-				srcs := ui.textureIndex[tile]
-				src := srcs[rand.Intn(len(srcs))]
+				srcs := ui.textureIndex[tile.Rune]
+				v := rand.Intn(len(srcs))
+				src := srcs[v]
+				level.TileAtPos(currentPos).Variance = v // this is super unnecessary, either remove the variance or find a better way of setting it.
 				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
 
 				pos := game.Pos{int32(x), int32(y)}
@@ -175,13 +179,16 @@ func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int32) {
 }
 
 func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int32) {
+	var currentPos game.Pos
 	for y, row := range level.Zone {
 		for x, tile := range row {
-			if tile == game.DirtFloor || tile == game.OpenDoor || tile == game.ClosedDoor {
+			if tile.Type == "Floor" || tile.Type == "Door" {
+				currentPos = game.Pos{X: int32(x), Y: int32(y)}
 				srcs := ui.textureIndex[game.DirtFloor]
-				src := srcs[rand.Intn(len(srcs))]
-				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
-
+				v := rand.Intn(len(srcs))
+				src := srcs[v]
+				level.TileAtPos(currentPos).Variance = v // this is super unnecessary, either remove the variance or find a better way of setting it.
+				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32}
 				pos := game.Pos{int32(x), int32(y)}
 				if level.Debug[pos] {
 					ui.textureAtlas.SetColorMod(128, 0, 0)
@@ -201,23 +208,32 @@ func (ui *ui) GetInput() {
 			var input game.Input
 			switch e := event.(type) {
 			case *sdl.QuitEvent:
-				input.Typ = game.CloseWindow
+				input.Type = game.CloseWindow
 				input.LevelChan = ui.levelChan
 				ui.QuitSDL()
 				return
 			case *sdl.WindowEvent:
 				if e.Event == sdl.WINDOWEVENT_CLOSE {
-					input.Typ = game.CloseWindow
+					input.Type = game.CloseWindow
 					input.LevelChan = ui.levelChan
 					ui.QuitSDL()
 					return
 				}
 			case *sdl.MouseButtonEvent:
 				if e.State == sdl.PRESSED {
-					mousePos := game.Pos{X: e.X, Y: e.Y}
-					ui.inputChan <- &game.Input{
-						Typ:      game.Search,
-						MousePos: mousePos,
+					if e.Button == sdl.BUTTON_LEFT {
+						mousePos := game.Pos{X: e.X, Y: e.Y}
+						ui.inputChan <- &game.Input{
+							Type:     game.Search,
+							MousePos: mousePos,
+						}
+					}
+					if e.Button == sdl.BUTTON_RIGHT {
+						mousePos := game.Pos{X: e.X, Y: e.Y}
+						ui.inputChan <- &game.Input{
+							Type:     game.Inspect,
+							MousePos: mousePos,
+						}
 					}
 				}
 			case *sdl.KeyboardEvent:
@@ -227,29 +243,29 @@ func (ui *ui) GetInput() {
 				var key sdl.Keycode
 				switch key = e.Keysym.Sym; key {
 				case sdl.K_ESCAPE:
-					input.Typ = game.CloseWindow
+					input.Type = game.CloseWindow
 					input.LevelChan = ui.levelChan
 					ui.QuitSDL()
 					fmt.Println("quit")
 					return
 				case sdl.K_UP, sdl.K_w:
-					input.Typ = game.Up
+					input.Type = game.Up
 					fmt.Println("up")
 				case sdl.K_DOWN, sdl.K_s:
-					input.Typ = game.Down
+					input.Type = game.Down
 					fmt.Println("down")
 				case sdl.K_LEFT, sdl.K_a:
-					input.Typ = game.Left
+					input.Type = game.Left
 					fmt.Println("left")
 				case sdl.K_RIGHT, sdl.K_d:
-					input.Typ = game.Right
+					input.Type = game.Right
 					fmt.Println("right")
 				case sdl.K_SPACE:
-					input.Typ = game.Search
+					input.Type = game.Search
 					fmt.Println("space")
 				}
 			}
-			if input.Typ != game.None {
+			if input.Type != game.None {
 				ui.inputChan <- &input
 			}
 		}

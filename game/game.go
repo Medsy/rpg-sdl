@@ -11,6 +11,7 @@ type Game struct {
 	LevelChans []chan *Level
 	InputChan  chan *Input
 	Level      *Level
+
 }
 
 type InputType int
@@ -21,13 +22,18 @@ const (
 	Down
 	Left
 	Right
+	Camera_Up
+	Camera_Down
+	Camera_Left
+	Camera_Right
 	Search
+	Inspect
 	QuitGame
 	CloseWindow
 )
 
 type Input struct {
-	Typ       InputType
+	Type      InputType
 	MousePos  Pos
 	LevelChan chan *Level
 }
@@ -35,17 +41,22 @@ type Input struct {
 var OffsetX int32
 var OffsetY int32
 
-type Tile rune
+type Tile struct {
+	Type string
+	Rune rune
+	Passable bool
+	Variance int
+}
 
 const (
-	PlayerTile Tile = '@'
-	StoneWall  Tile = '#'
-	DirtFloor  Tile = '.'
-	ClosedDoor Tile = '|'
-	OpenDoor   Tile = '/'
-	Rat        Tile = 'R'
-	Spider     Tile = 'S'
-	Empty      Tile = 0
+	PlayerTile rune = '@'
+	StoneWall  rune = '#'
+	DirtFloor  rune = '.'
+	ClosedDoor rune = '|'
+	OpenDoor   rune = '/'
+	Rat        rune = 'R'
+	Spider     rune = 'S'
+	Empty      rune = 0
 )
 
 type Pos struct {
@@ -64,6 +75,7 @@ type Level struct {
 	Zone     [][]Tile
 	Player   Player
 	Monsters map[Pos]*Monster
+	TileMap	 map[rune]Tile
 	Debug    map[Pos]bool
 }
 
@@ -95,6 +107,7 @@ func loadLevelFromFile(filename string) *Level {
 	longestRow := 0
 	index := 0
 
+
 	for scanner.Scan() {
 		zoneRows = append(zoneRows, scanner.Text())
 		if len(zoneRows[index]) > longestRow {
@@ -104,6 +117,7 @@ func loadLevelFromFile(filename string) *Level {
 	}
 	level.Zone = make([][]Tile, len(zoneRows))
 	level.Monsters = make(map[Pos]*Monster)
+	level.LoadTileMap()
 
 	for i := range level.Zone {
 		level.Zone[i] = make([]Tile, longestRow)
@@ -114,25 +128,25 @@ func loadLevelFromFile(filename string) *Level {
 			var t Tile
 			switch r {
 			case ' ', '\n', '\t', '\r':
-				t = Empty
+				t = level.TileMap[r]
 			case '#':
-				t = StoneWall
+				t = level.TileMap[r]
 			case '.':
-				t = DirtFloor
+				t = level.TileMap[r]
 			case '|':
-				t = ClosedDoor
+				t = level.TileMap[r]
 			case '/':
-				t = OpenDoor
+				t = level.TileMap[r]
 			case '@':
 				level.Player.X = int32(x)
 				level.Player.Y = int32(y)
-				t = DirtFloor
+				t = level.TileMap[r]
 			case 'R':
 				level.Monsters[Pos{int32(x), int32(y)}] = NewRat()
-				t = Rat
+				t = level.TileMap[r]
 			case 'S':
 				level.Monsters[Pos{int32(x), int32(y)}] = NewSpider()
-				t = Spider
+				t = level.TileMap[r]
 			default:
 				panic(fmt.Sprintf("Invalid rune '%s' in map at position [%d,%d]", string(r), y+1, x+1))
 			}
@@ -145,56 +159,64 @@ func loadLevelFromFile(filename string) *Level {
 
 func canWalk(level *Level, pos Pos) bool {
 	t := level.Zone[pos.Y][pos.X]
-	switch t {
-	case StoneWall, Empty:
+	switch t.Rune {
+	case StoneWall, ClosedDoor, Empty:
 		return false
 	default:
 		return true
 	}
 }
 
-func checkDoor(level *Level, pos Pos) {
+func openDoor(level *Level, pos Pos) {
 	t := level.Zone[pos.Y][pos.X]
-	if t == ClosedDoor {
-		level.Zone[pos.Y][pos.X] = OpenDoor
+	if t.Rune == ClosedDoor {
+		level.Zone[pos.Y][pos.X].Rune = OpenDoor
 	}
 }
 
 func (g *Game) handleInput(input *Input) {
 	level := g.Level
 	p := level.Player
-	switch input.Typ {
+	switch input.Type {
 	case Up:
 		if canWalk(level, Pos{p.X, p.Y - 1}) {
 			level.Player.Y--
 		} else {
-			checkDoor(level, Pos{p.X, p.Y - 1})
+			openDoor(level, Pos{p.X, p.Y - 1})
 		}
 	case Down:
 		if canWalk(level, Pos{p.X, p.Y + 1}) {
 			level.Player.Y++
 		} else {
-			checkDoor(level, Pos{p.X, p.Y + 1})
+			openDoor(level, Pos{p.X, p.Y + 1})
 		}
 	case Left:
 		if canWalk(level, Pos{p.X - 1, p.Y}) {
 			level.Player.X--
 		} else {
-			checkDoor(level, Pos{p.X - 1, p.Y})
+			openDoor(level, Pos{p.X - 1, p.Y})
 		}
 	case Right:
 		if canWalk(level, Pos{p.X + 1, p.Y}) {
 			level.Player.X++
 		} else {
-			checkDoor(level, Pos{p.X + 1, p.Y})
+			openDoor(level, Pos{p.X + 1, p.Y})
 		}
+	case Camera_Up:
+
+	case Camera_Down:
+
+	case Camera_Left:
+
+	case Camera_Right:
+
 	case Search:
 		pos := screenToWorldPos(input.MousePos)
-		t := g.getTileAtPos(pos)
-		if t == DirtFloor {
+		t := level.TileAtPos(pos)
+		if t.Rune == DirtFloor {
 			g.astar(p.Pos, input.MousePos)
-		} else if t == ClosedDoor {
-			level.Zone[pos.Y][pos.X] = OpenDoor
+		} else if t.Rune == ClosedDoor {
+			level.Zone[pos.Y][pos.X].Rune = OpenDoor
 		}
 	case CloseWindow:
 		close(input.LevelChan)
@@ -205,6 +227,7 @@ func (g *Game) handleInput(input *Input) {
 				break
 			}
 		}
+		g.LevelChans = append(g.LevelChans[:chanIndex], g.LevelChans[chanIndex+1:]...)
 		g.LevelChans = append(g.LevelChans[:chanIndex], g.LevelChans[chanIndex+1:]...)
 	case None:
 		break
@@ -269,8 +292,8 @@ func (g *Game) astar(start Pos, goal Pos) []Pos {
 
 		for _, next := range getNeighbours(level, current) {
 			var cost = 1
-			t := g.getTileAtPos(next)
-			if t == ClosedDoor {cost = 4}
+			t := level.TileAtPos(next)
+			if t.Rune == ClosedDoor {cost = 4}
 			newCost := currentCost[current] + cost
 			_, exists := currentCost[next]
 			if !exists || newCost < currentCost[next] {
@@ -281,7 +304,7 @@ func (g *Game) astar(start Pos, goal Pos) []Pos {
 				edge = edge.push(next, priority)
 				level.Debug[next] = true
 				prevPos[next] = current
-				fmt.Printf("{%d, %d} to {%d, %d} cost: %d\n",current.X, current.Y, next.X, next.Y, newCost)
+				//fmt.Printf("{%d, %d} to {%d, %d} cost: %d\n",current.X, current.Y, next.X, next.Y, newCost)
 			}
 		}
 	}
@@ -296,24 +319,20 @@ func getNeighbours(level *Level, pos Pos) []Pos {
 	l := Pos{pos.X - 1, pos.Y}
 	r := Pos{pos.X + 1, pos.Y}
 
-	if canWalk(level, u) {
+	if level.TileAtPos(u).Passable {
 		neighbours = append(neighbours, u)
 	}
-	if canWalk(level, d) {
+	if level.TileAtPos(d).Passable {
 		neighbours = append(neighbours, d)
 	}
-	if canWalk(level, l) {
+	if level.TileAtPos(l).Passable {
 		neighbours = append(neighbours, l)
 	}
-	if canWalk(level, r) {
+	if level.TileAtPos(r).Passable {
 		neighbours = append(neighbours, r)
 	}
 
 	return neighbours
-}
-
-func (g *Game) getTileAtPos(pos Pos) Tile {
-	return g.Level.Zone[pos.Y][pos.X]
 }
 
 func screenToWorldPos(pos Pos) Pos {
@@ -328,7 +347,7 @@ func (g *Game) Run() {
 	}
 
 	for input := range g.InputChan {
-		if input.Typ == QuitGame {
+		if input.Type == QuitGame {
 			return
 		}
 		g.handleInput(input)
