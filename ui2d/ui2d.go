@@ -2,14 +2,14 @@ package ui2d
 
 import (
 	"bufio"
-	"fmt"
-	"github.com/veandco/go-sdl2/img"
-	"github.com/veandco/go-sdl2/sdl"
 	"math/rand"
 	"os"
 	"rpg-sdl/game"
 	"strconv"
 	"strings"
+
+	"github.com/veandco/go-sdl2/img"
+	"github.com/veandco/go-sdl2/sdl"
 )
 
 type ui struct {
@@ -23,10 +23,6 @@ type ui struct {
 	centerY      int32
 	levelChan    chan *game.Level
 	inputChan    chan *game.Input
-}
-
-type UI2d struct {
-	MouseInput game.Pos
 }
 
 func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
@@ -91,10 +87,12 @@ func (ui *ui) loadTextureIndex() {
 		if err != nil {
 			panic(err)
 		}
+
 		y, err := strconv.ParseInt(strings.TrimSpace(splitXYC[1]), 10, 64)
 		if err != nil {
 			panic(err)
 		}
+
 		variationCount, err := strconv.ParseInt(strings.TrimSpace(splitXYC[2]), 10, 64)
 		if err != nil {
 			panic(err)
@@ -143,8 +141,16 @@ func (ui *ui) Draw(level *game.Level) {
 	ui.drawFloor(level, game.OffsetX, game.OffsetY)
 	ui.drawLevel(level, game.OffsetX, game.OffsetY)
 
-	// Player tile 13, 51
-	ui.renderer.Copy(ui.textureAtlas, &sdl.Rect{X: 13 * 32, Y: 59 * 32, W: 32, H: 32}, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
+	for pos, monster := range level.Monsters {
+		monsterSrcRect := ui.textureIndex[monster.Rune][0]
+
+		ui.renderer.Copy(ui.textureAtlas, &monsterSrcRect, &sdl.Rect{X: int32(pos.X)*32 + game.OffsetX, Y: int32(pos.Y)*32 + game.OffsetY, W: 32, H: 32})
+	}
+
+	// Player tile 13, 59
+	playerSrcRect := ui.textureIndex[game.PlayerTile][0]
+	ui.renderer.Copy(ui.textureAtlas, &playerSrcRect, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
+
 	ui.renderer.Present()
 }
 
@@ -152,20 +158,21 @@ func (ui *ui) Draw(level *game.Level) {
 // if floor only is true, all tiles that are not Empty are drawn as dirt floor
 func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int32) {
 	var currentPos game.Pos
-	for y, row := range level.Zone {
+	for y, row := range level.World {
 		for x, tile := range row { // TODO: replace tile
 			currentPos = game.Pos{X: int32(x), Y: int32(y)}
 			if tile.Rune != game.Empty {
-				if tile.Rune == game.DirtFloor {
+				if tile.Type == "Floor" || tile.Type == "Player" || tile.Type == "Monster" {
 					continue
 				}
+
 				srcs := ui.textureIndex[tile.Rune]
 				v := rand.Intn(len(srcs))
 				src := srcs[v]
-				level.TileAtPos(currentPos).Variance = v // this is super unnecessary, either remove the variance or find a better way of setting it.
+				level.TileAtPos(currentPos).Variance = v                                          // this is super unnecessary, either remove the variance or find a better way of setting it.
 				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
 
-				pos := game.Pos{int32(x), int32(y)}
+				pos := game.Pos{X: int32(x), Y: int32(y)}
 				if level.Debug[pos] {
 					ui.textureAtlas.SetColorMod(128, 0, 0)
 				} else {
@@ -180,16 +187,16 @@ func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int32) {
 
 func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int32) {
 	var currentPos game.Pos
-	for y, row := range level.Zone {
+	for y, row := range level.World {
 		for x, tile := range row {
-			if tile.Type == "Floor" || tile.Type == "Door" {
+			if tile.HasFloor {
 				currentPos = game.Pos{X: int32(x), Y: int32(y)}
 				srcs := ui.textureIndex[game.DirtFloor]
 				v := rand.Intn(len(srcs))
 				src := srcs[v]
 				level.TileAtPos(currentPos).Variance = v // this is super unnecessary, either remove the variance or find a better way of setting it.
 				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32}
-				pos := game.Pos{int32(x), int32(y)}
+				pos := game.Pos{X: int32(x), Y: int32(y)}
 				if level.Debug[pos] {
 					ui.textureAtlas.SetColorMod(128, 0, 0)
 				} else {
@@ -231,7 +238,7 @@ func (ui *ui) GetInput() {
 					if e.Button == sdl.BUTTON_RIGHT {
 						mousePos := game.Pos{X: e.X, Y: e.Y}
 						ui.inputChan <- &game.Input{
-							Type:     game.Inspect,
+							Type:     game.Search,
 							MousePos: mousePos,
 						}
 					}
@@ -246,23 +253,17 @@ func (ui *ui) GetInput() {
 					input.Type = game.CloseWindow
 					input.LevelChan = ui.levelChan
 					ui.QuitSDL()
-					fmt.Println("quit")
 					return
 				case sdl.K_UP, sdl.K_w:
 					input.Type = game.Up
-					fmt.Println("up")
 				case sdl.K_DOWN, sdl.K_s:
 					input.Type = game.Down
-					fmt.Println("down")
 				case sdl.K_LEFT, sdl.K_a:
 					input.Type = game.Left
-					fmt.Println("left")
 				case sdl.K_RIGHT, sdl.K_d:
 					input.Type = game.Right
-					fmt.Println("right")
 				case sdl.K_SPACE:
 					input.Type = game.Search
-					fmt.Println("space")
 				}
 			}
 			if input.Type != game.None {
@@ -276,6 +277,6 @@ func (ui *ui) GetInput() {
 			}
 		default:
 		}
-		sdl.Delay(16)
+		sdl.Delay(30)
 	}
 }

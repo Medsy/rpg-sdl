@@ -4,43 +4,42 @@ func (l *Level) LoadTileMap() {
 	l.TileMap = make(map[rune]Tile)
 	tiles := []Tile{
 		{
-			Type: "Wall",
-			Rune: StoneWall,
+			Type:     "Wall",
+			Rune:     StoneWall,
 			Passable: false,
+			HasFloor: false,
+			Occupied: false,
 		},
 		{
-			Type: "Floor",
-			Rune: DirtFloor,
+			Name:     "Dirt Floor",
+			Type:     "Floor",
+			Rune:     DirtFloor,
 			Passable: true,
+			HasFloor: true,
+			Occupied: false,
 		},
 		{
-			Type: "Door",
-			Rune: ClosedDoor,
+			Name:     "Closed Door",
+			Type:     "Door",
+			Rune:     ClosedDoor,
+			Passable: false,
+			HasFloor: true,
+			Occupied: false,
+		},
+		{
+			Name:     "Open Door",
+			Type:     "Door",
+			Rune:     OpenDoor,
 			Passable: true,
-		},
-		{
-			Type: "Door",
-			Rune: OpenDoor,
-			Passable: true,
-		},
-		{
-			Type: "Player",
-			Rune: PlayerTile,
-		},
-		{
-			Type: "Monster",
-			Rune: Rat,
-			Passable: true,
-		},
-		{
-			Type: "Monster",
-			Rune: Spider,
-			Passable: true,
+			HasFloor: true,
+			Occupied: false,
 		},
 		{ // I don't like this
-			Type: "Empty",
-			Rune: Empty,
+			Type:     "Empty",
+			Rune:     Empty,
 			Passable: false,
+			HasFloor: false,
+			Occupied: false,
 		},
 	}
 
@@ -55,5 +54,5 @@ func (l *Level) SetTileVariance(pos Pos) {
 }
 
 func (l *Level) TileAtPos(pos Pos) *Tile {
-	return &l.Zone[pos.Y][pos.X]
+	return &l.World[pos.Y][pos.X]
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"log"
 	"os"
 	"rpg-sdl/game"
@@ -32,9 +31,7 @@ func main() {
 	runtime.LockOSThread()
 	g := game.NewGame(1, "game/maps/level1.map")
 
-	spew.Dump(g.Level.TileMap)
-
-	go func() {g.Run()}()
+	go func() { g.Run() }()
 	ui := ui2d.NewUI(g.InputChan, g.LevelChans[0])
 	ui.GetInput()
 

@@ -3,7 +3,6 @@ package game
 import (
 	"bufio"
 	"fmt"
-	"math"
 	"os"
 )
 
@@ -11,7 +10,6 @@ type Game struct {
 	LevelChans []chan *Level
 	InputChan  chan *Input
 	Level      *Level
-
 }
 
 type InputType int
@@ -41,41 +39,33 @@ type Input struct {
 var OffsetX int32
 var OffsetY int32
 
-type Tile struct {
-	Type string
-	Rune rune
-	Passable bool
-	Variance int
-}
-
-const (
-	PlayerTile rune = '@'
-	StoneWall  rune = '#'
-	DirtFloor  rune = '.'
-	ClosedDoor rune = '|'
-	OpenDoor   rune = '/'
-	Rat        rune = 'R'
-	Spider     rune = 'S'
-	Empty      rune = 0
-)
-
 type Pos struct {
 	X, Y int32
 }
 
 type Entity struct {
 	Pos
+	Rune rune
+	Name string
+}
+
+type Character struct {
+	Entity
+	Hitpoints int
+	Strength  int
+	Speed     float64
+	AP        float64
 }
 
 type Player struct {
-	Entity
+	Character
 }
 
 type Level struct {
-	Zone     [][]Tile
-	Player   Player
+	World    [][]Tile
+	Player   *Player
 	Monsters map[Pos]*Monster
-	TileMap	 map[rune]Tile
+	TileMap  map[rune]Tile
 	Debug    map[Pos]bool
 }
 
@@ -107,7 +97,6 @@ func loadLevelFromFile(filename string) *Level {
 	longestRow := 0
 	index := 0
 
-
 	for scanner.Scan() {
 		zoneRows = append(zoneRows, scanner.Text())
 		if len(zoneRows[index]) > longestRow {
@@ -115,14 +104,29 @@ func loadLevelFromFile(filename string) *Level {
 		}
 		index++
 	}
-	level.Zone = make([][]Tile, len(zoneRows))
+	level.World = make([][]Tile, len(zoneRows))
+
+	level.Player = &Player{
+		Character: Character{
+			Entity: Entity{
+				Pos:  Pos{},
+				Rune: '@',
+				Name: "meds",
+			},
+			Hitpoints: 20,
+			Strength:  20,
+			Speed:     1.0,
+			AP:        0,
+		},
+	}
+
 	level.Monsters = make(map[Pos]*Monster)
 	level.LoadTileMap()
 
-	for i := range level.Zone {
-		level.Zone[i] = make([]Tile, longestRow)
+	for i := range level.World {
+		level.World[i] = make([]Tile, longestRow)
 	}
-	for y := 0; y < len(level.Zone); y++ {
+	for y := 0; y < len(level.World); y++ {
 		line := zoneRows[y]
 		for x, r := range line {
 			var t Tile
@@ -140,17 +144,19 @@ func loadLevelFromFile(filename string) *Level {
 			case '@':
 				level.Player.X = int32(x)
 				level.Player.Y = int32(y)
-				t = level.TileMap[r]
+				t = level.TileMap[DirtFloor]
 			case 'R':
-				level.Monsters[Pos{int32(x), int32(y)}] = NewRat()
-				t = level.TileMap[r]
+				p := Pos{X: int32(x), Y: int32(y)}
+				level.Monsters[p] = NewRat(p)
+				t = level.TileMap[DirtFloor]
 			case 'S':
-				level.Monsters[Pos{int32(x), int32(y)}] = NewSpider()
-				t = level.TileMap[r]
+				p := Pos{X: int32(x), Y: int32(y)}
+				level.Monsters[p] = NewSpider(p)
+				t = level.TileMap[DirtFloor]
 			default:
 				panic(fmt.Sprintf("Invalid rune '%s' in map at position [%d,%d]", string(r), y+1, x+1))
 			}
-			level.Zone[y][x] = t
+			level.World[y][x] = t
 		}
 	}
 
@@ -158,19 +164,40 @@ func loadLevelFromFile(filename string) *Level {
 }
 
 func canWalk(level *Level, pos Pos) bool {
-	t := level.Zone[pos.Y][pos.X]
-	switch t.Rune {
-	case StoneWall, ClosedDoor, Empty:
-		return false
-	default:
-		return true
-	}
+	t := level.World[pos.Y][pos.X]
+	return t.Passable
 }
 
 func openDoor(level *Level, pos Pos) {
-	t := level.Zone[pos.Y][pos.X]
+	t := level.World[pos.Y][pos.X]
 	if t.Rune == ClosedDoor {
-		level.Zone[pos.Y][pos.X].Rune = OpenDoor
+		level.World[pos.Y][pos.X] = level.TileMap[OpenDoor]
+	}
+}
+
+func (p *Player) Move(level *Level, to Pos) {
+	_, exists := level.Monsters[to]
+	if !exists {
+		p.Pos = to
+	}
+}
+
+func (p *Player) Action(level *Level, target Pos) {
+	m, exists := level.Monsters[target]
+	if exists {
+		Attack(&p.Character, &m.Character)
+		if m.Hitpoints <= 0 {
+			level.TileAtPos(m.Pos).Passable = true
+			delete(level.Monsters, m.Pos)
+		}
+		if p.Hitpoints <= 0 {
+			panic("You Died")
+		}
+	}
+
+	t := level.TileAtPos(target)
+	if t.Name == "Closed Door" {
+		openDoor(level, target)
 	}
 }
 
@@ -179,28 +206,32 @@ func (g *Game) handleInput(input *Input) {
 	p := level.Player
 	switch input.Type {
 	case Up:
-		if canWalk(level, Pos{p.X, p.Y - 1}) {
-			level.Player.Y--
+		pos := Pos{p.X, p.Y - 1}
+		if canWalk(level, pos) {
+			level.Player.Move(level, pos)
 		} else {
-			openDoor(level, Pos{p.X, p.Y - 1})
+			p.Action(level, pos)
 		}
 	case Down:
-		if canWalk(level, Pos{p.X, p.Y + 1}) {
-			level.Player.Y++
+		pos := Pos{p.X, p.Y + 1}
+		if canWalk(level, pos) {
+			level.Player.Move(level, pos)
 		} else {
-			openDoor(level, Pos{p.X, p.Y + 1})
+			p.Action(level, pos)
 		}
 	case Left:
-		if canWalk(level, Pos{p.X - 1, p.Y}) {
-			level.Player.X--
+		pos := Pos{p.X - 1, p.Y}
+		if canWalk(level, pos) {
+			level.Player.Move(level, pos)
 		} else {
-			openDoor(level, Pos{p.X - 1, p.Y})
+			p.Action(level, pos)
 		}
 	case Right:
-		if canWalk(level, Pos{p.X + 1, p.Y}) {
-			level.Player.X++
+		pos := Pos{p.X + 1, p.Y}
+		if canWalk(level, pos) {
+			level.Player.Move(level, pos)
 		} else {
-			openDoor(level, Pos{p.X + 1, p.Y})
+			p.Action(level, Pos{p.X + 1, p.Y})
 		}
 	case Camera_Up:
 
@@ -211,12 +242,12 @@ func (g *Game) handleInput(input *Input) {
 	case Camera_Right:
 
 	case Search:
-		pos := screenToWorldPos(input.MousePos)
-		t := level.TileAtPos(pos)
+		target := screenToWorldPos(input.MousePos)
+		t := level.TileAtPos(target)
 		if t.Rune == DirtFloor {
-			g.astar(p.Pos, input.MousePos)
+			level.astar(p.Pos, target)
 		} else if t.Rune == ClosedDoor {
-			level.Zone[pos.Y][pos.X].Rune = OpenDoor
+			openDoor(level, target)
 		}
 	case CloseWindow:
 		close(input.LevelChan)
@@ -234,109 +265,8 @@ func (g *Game) handleInput(input *Input) {
 	}
 }
 
-func (g *Game) bfsearch(start Pos) {
-	level := g.Level
-	edge := make([]Pos, 0, 8)
-	edge = append(edge, start)
-	visited := make(map[Pos]bool)
-	visited[start] = true
-	level.Debug = visited
-
-	for len(edge) > 0 {
-		current := edge[0]
-		edge = edge[1:]
-		for _, next := range getNeighbours(level, current) {
-			if !visited[next] {
-				edge = append(edge, next)
-				visited[next] = true
-			}
-		}
-	}
-}
-
-func (g *Game) astar(start Pos, goal Pos) []Pos {
-	level := g.Level
-	goal = screenToWorldPos(goal)
-	fmt.Printf("start: {%d, %d}\ngoal: {%d, %d}\n", start.X, start.Y, goal.X, goal.Y)
-	edge := make(pqueue, 0, 8)
-	edge = edge.push(start, 1)
-	prevPos := make(map[Pos]Pos)
-	prevPos[start] = start
-	currentCost := make(map[Pos]int)
-	currentCost[start] = 0
-
-	level.Debug = make(map[Pos]bool)
-
-	var current Pos
-	for len(edge) > 0 {
-		edge, current = edge.pop()
-
-		if current == goal {
-			path := make([]Pos, 0)
-			p := current
-			for p != start {
-				path = append(path, p)
-				p = prevPos[p]
-			}
-			path = append(path, p)
-			for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-				path[i], path[j] = path[j], path[i]
-			}
-			level.Debug = make(map[Pos]bool)
-			for _, pos := range path {
-				level.Debug[pos] = true
-			}
-
-			return path
-		}
-
-		for _, next := range getNeighbours(level, current) {
-			var cost = 1
-			t := level.TileAtPos(next)
-			if t.Rune == ClosedDoor {cost = 4}
-			newCost := currentCost[current] + cost
-			_, exists := currentCost[next]
-			if !exists || newCost < currentCost[next] {
-				currentCost[next] = newCost
-				xDist := int(math.Abs(float64(goal.X - next.X)))
-				yDist := int(math.Abs(float64(goal.Y - next.Y)))
-				priority := newCost + xDist + yDist
-				edge = edge.push(next, priority)
-				level.Debug[next] = true
-				prevPos[next] = current
-				//fmt.Printf("{%d, %d} to {%d, %d} cost: %d\n",current.X, current.Y, next.X, next.Y, newCost)
-			}
-		}
-	}
-
-	return nil
-}
-
-func getNeighbours(level *Level, pos Pos) []Pos {
-	neighbours := make([]Pos, 0, 4)
-	u := Pos{pos.X, pos.Y - 1}
-	d := Pos{pos.X, pos.Y + 1}
-	l := Pos{pos.X - 1, pos.Y}
-	r := Pos{pos.X + 1, pos.Y}
-
-	if level.TileAtPos(u).Passable {
-		neighbours = append(neighbours, u)
-	}
-	if level.TileAtPos(d).Passable {
-		neighbours = append(neighbours, d)
-	}
-	if level.TileAtPos(l).Passable {
-		neighbours = append(neighbours, l)
-	}
-	if level.TileAtPos(r).Passable {
-		neighbours = append(neighbours, r)
-	}
-
-	return neighbours
-}
-
 func screenToWorldPos(pos Pos) Pos {
-	return Pos{(pos.X-OffsetX)/32, (pos.Y-OffsetY)/32}
+	return Pos{(pos.X - OffsetX) / 32, (pos.Y - OffsetY) / 32}
 }
 
 func (g *Game) Run() {
@@ -351,6 +281,10 @@ func (g *Game) Run() {
 			return
 		}
 		g.handleInput(input)
+
+		for _, monster := range g.Level.Monsters {
+			monster.Update(g.Level)
+		}
 
 		if len(g.LevelChans) == 0 {
 			return
