@@ -1,47 +1,69 @@
 package game
 
+import (
+	"fmt"
+)
+
 type Monster struct {
 	Character
 }
 
 func NewRat(p Pos) *Monster {
-	return &Monster{Character{Entity{p, 'R', "Rat"}, 5, 5, 1.5, 0.0}}
+	return &Monster{Character{Entity{p, 'R', "Rat"}, "Monster", 5, 1, 1.5, 10, 0.0, true}}
 }
 
 func NewSpider(p Pos) *Monster {
-	return &Monster{Character{Entity{p, 'S', "Spider"}, 7, 7, 1, 0.0}}
+	return &Monster{Character{Entity{p, 'S', "Spider"}, "Monster", 7, 2, 1, 10, 0.0, true}}
 }
 
 func (m *Monster) Update(level *Level) {
-	playerPos := level.Player.Pos
-	path, _, found := level.astar(m.Pos, playerPos)
+	p := level.Player
+	path, _, found := level.astar(m.Pos, p.Pos)
 	moveIndex := 1
 
-	if found {
+	if m.Hitpoints < 0 {
+		m.Dead(level)
+	}
+
+	if found && p.Alive {
 		m.AP += m.Speed
 		apInt := int(m.AP)
 		for i := 0; i < apInt; i++ {
 			if moveIndex < len(path) {
-				m.Move(path[moveIndex], level)
-				moveIndex++
+				if m.Move(path[moveIndex], level) {
+					moveIndex++
+				}
 			}
 		}
 	}
 }
 
-func (m *Monster) Move(to Pos, level *Level) {
-	_, exists := level.Monsters[to]
-	if !exists && to != level.Player.Pos {
-		level.TileAtPos(m.Pos).Passable = true
-		delete(level.Monsters, m.Pos)
-		level.Monsters[to] = m
-		m.Pos = to
-		m.AP--
-	} else if to == level.Player.Pos {
-		Attack(&m.Character, &level.Player.Character)
-		if m.Hitpoints <= 0 { //TODO: review death
+func (m *Monster) findPlayer(level *Level) {
+
+}
+
+func (m *Monster) Move(to Pos, level *Level) bool {
+	moved := false
+	tile := *level.TileAtPos(to)
+	if m.Hitpoints > 0 && m.AP >= float64(tile.Cost) {
+		_, exists := level.Monsters[to]
+		if !exists && to != level.Player.Pos {
 			delete(level.Monsters, m.Pos)
+			level.Monsters[to] = m
+			m.Pos = to
+			m.AP -= float64(tile.Cost)
+			moved = true
+		} else if to == level.Player.Pos {
+			events := Attack(&m.Character, &level.Player.Character)
+			level.AddEvents(events...)
 		}
 	}
-	level.TileAtPos(m.Pos).Passable = false
+
+	return moved
+}
+
+func (m *Monster) Dead(level *Level) {
+	level.TileAtPos(m.Pos).BloodStained = true
+	level.AddEvents(fmt.Sprintf("%s died", m.Name))
+	delete(level.Monsters, m.Pos)
 }

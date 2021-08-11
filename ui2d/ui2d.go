@@ -10,27 +10,48 @@ import (
 
 	"github.com/veandco/go-sdl2/img"
 	"github.com/veandco/go-sdl2/sdl"
+	"github.com/veandco/go-sdl2/ttf"
 )
 
 type ui struct {
-	winWidth     int
-	winHeight    int
-	window       *sdl.Window
-	renderer     *sdl.Renderer
-	textureAtlas *sdl.Texture
-	textureIndex map[rune][]sdl.Rect
-	centerX      int32
-	centerY      int32
-	levelChan    chan *game.Level
-	inputChan    chan *game.Input
+	winWidth        int
+	winHeight       int
+	window          *sdl.Window
+	renderer        *sdl.Renderer
+	textureAtlas    *sdl.Texture
+	fontSmall       *ttf.Font
+	fontMedium      *ttf.Font
+	fontLarge       *ttf.Font
+	eventBackground *sdl.Texture
+	textureIndex    map[rune][]sdl.Rect
+	centerX         int
+	centerY         int
+	levelChan       chan *game.Level
+	inputChan       chan *game.Input
+	r               *rand.Rand
+	strToTexSmall   map[string]*sdl.Texture
+	strToTexMedium  map[string]*sdl.Texture
+	strToTexLarge   map[string]*sdl.Texture
 }
+
+type FontSize int
+
+const (
+	FontSmall FontSize = iota
+	FontMedium
+	FontLarge
+)
 
 func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui := &ui{}
 	ui.inputChan = inputChan
 	ui.levelChan = levelChan
+	ui.strToTexSmall = make(map[string]*sdl.Texture)  // TODO: maybe prevent using 3 maps by combining the
+	ui.strToTexMedium = make(map[string]*sdl.Texture) // string with the fontsize like
+	ui.strToTexLarge = make(map[string]*sdl.Texture)  // "1:this is my string" with 1 meaning small
 	ui.winWidth = 1280
 	ui.winHeight = 720
+	ui.r = rand.New(rand.NewSource(1))
 
 	sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
 	err := sdl.Init(sdl.INIT_EVERYTHING)
@@ -50,6 +71,25 @@ func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	}
 	sdl.SetHint(sdl.HINT_RENDER_SCALE_QUALITY, "1")
 
+	if err := ttf.Init(); err != nil {
+		panic(err)
+	}
+
+	ui.fontSmall, err = ttf.OpenFont("ui2d/assets/font.ttf", 16)
+	if err != nil {
+		panic(err)
+	}
+
+	ui.fontMedium, err = ttf.OpenFont("ui2d/assets/font.ttf", 24)
+	if err != nil {
+		panic(err)
+	}
+
+	ui.fontLarge, err = ttf.OpenFont("ui2d/assets/font.ttf", 32)
+	if err != nil {
+		panic(err)
+	}
+
 	ui.textureAtlas, err = img.LoadTexture(ui.renderer, "ui2d/assets/tiles.png")
 	if err != nil {
 		panic(err)
@@ -59,13 +99,62 @@ func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui.centerX = -1
 	ui.centerY = -1
 
+	ui.eventBackground = ui.GetSinglePixelTex(sdl.Color{0, 0, 0, 128})
+	ui.eventBackground.SetBlendMode(sdl.BLENDMODE_BLEND)
+
 	return ui
+}
+
+func (ui *ui) stringToTexture(string string, color sdl.Color, size FontSize) *sdl.Texture {
+	var font *ttf.Font
+	switch size {
+	case FontSmall:
+		font = ui.fontSmall
+		tex, exists := ui.strToTexSmall[string]
+		if exists {
+			return tex
+		}
+	case FontMedium:
+		font = ui.fontMedium
+		tex, exists := ui.strToTexMedium[string]
+		if exists {
+			return tex
+		}
+	case FontLarge:
+		font = ui.fontLarge
+		tex, exists := ui.strToTexLarge[string]
+		if exists {
+			return tex
+		}
+	}
+
+	fontSurface, err := font.RenderUTF8BlendedWrapped(string, color, 512)
+	if err != nil {
+		panic(err)
+	}
+
+	tex, err := ui.renderer.CreateTextureFromSurface(fontSurface)
+	if err != nil {
+		panic(err)
+	}
+
+	switch size {
+	case FontSmall:
+		ui.strToTexSmall[string] = tex
+	case FontMedium:
+		ui.strToTexMedium[string] = tex
+	case FontLarge:
+		ui.strToTexLarge[string] = tex
+	}
+
+	return tex
 }
 
 func (ui *ui) QuitSDL() {
 	sdl.Quit()
 	ui.window.Destroy()
 	ui.renderer.Destroy()
+	// ui.font.Close()
 }
 
 func (ui *ui) loadTextureIndex() {
@@ -83,7 +172,7 @@ func (ui *ui) loadTextureIndex() {
 
 		xy := line[1:]
 		splitXYC := strings.Split(xy, ",")
-		x, err := strconv.ParseInt(strings.TrimSpace(splitXYC[0]), 10, 64)
+		x, err := strconv.ParseInt(strings.TrimSpace(splitXYC[0]), 10, 24)
 		if err != nil {
 			panic(err)
 		}
@@ -114,14 +203,12 @@ func (ui *ui) loadTextureIndex() {
 }
 
 func (ui *ui) Draw(level *game.Level) {
-	rand.Seed(1992) // needs to be called everytime before rendering with random tiles
-
 	if ui.centerX == -1 && ui.centerY == -1 {
 		ui.centerX = level.Player.X
 		ui.centerY = level.Player.Y
 	}
 
-	threshold := int32(5)
+	threshold := 5
 	if level.Player.X > ui.centerX+threshold {
 		ui.centerX++
 	}
@@ -135,78 +222,158 @@ func (ui *ui) Draw(level *game.Level) {
 		ui.centerY--
 	}
 
-	game.OffsetX = int32(ui.winWidth/2) - (ui.centerX * 32)
-	game.OffsetY = int32(ui.winHeight/2) - (ui.centerY * 32)
+	game.OffsetX = (ui.winWidth / 2) - (ui.centerX * 32)
+	game.OffsetY = (ui.winHeight / 2) - (ui.centerY * 32)
 	ui.renderer.Clear()
+	ui.r.Seed(63)
+
 	ui.drawFloor(level, game.OffsetX, game.OffsetY)
 	ui.drawLevel(level, game.OffsetX, game.OffsetY)
+	ui.drawOnFloor(level, game.OffsetX, game.OffsetY)
+
+	ui.textureAtlas.SetColorMod(255, 255, 255) // needed or sometimes entities stay modded
 
 	for pos, monster := range level.Monsters {
-		monsterSrcRect := ui.textureIndex[monster.Rune][0]
+		if level.Level[pos.Y][pos.X].Visible {
+			monsterSrcRect := ui.textureIndex[monster.Rune][0]
 
-		ui.renderer.Copy(ui.textureAtlas, &monsterSrcRect, &sdl.Rect{X: int32(pos.X)*32 + game.OffsetX, Y: int32(pos.Y)*32 + game.OffsetY, W: 32, H: 32})
+			ui.renderer.Copy(ui.textureAtlas, &monsterSrcRect, &sdl.Rect{X: int32(pos.X*32 + game.OffsetX), Y: int32(pos.Y*32 + game.OffsetY), W: 32, H: 32})
+		}
 	}
 
 	// Player tile 13, 59
 	playerSrcRect := ui.textureIndex[game.PlayerTile][0]
-	ui.renderer.Copy(ui.textureAtlas, &playerSrcRect, &sdl.Rect{X: level.Player.X*32 + game.OffsetX, Y: level.Player.Y*32 + game.OffsetY, W: 32, H: 32})
+	ui.renderer.Copy(ui.textureAtlas, &playerSrcRect, &sdl.Rect{X: int32(level.Player.X*32 + game.OffsetX), Y: int32(level.Player.Y*32 + game.OffsetY), W: 32, H: 32}) //TODO: custom rect builder
+
+	eventStart := int32(float64(ui.winHeight) * .72)
+	eventWidth := int32(float64(ui.winWidth) * .30)
+
+	ui.renderer.Copy(ui.eventBackground, nil, &sdl.Rect{0, eventStart, eventWidth, int32(ui.winHeight) - eventStart})
+
+	// loop and print events
+	i := level.EventPos
+	count := 0
+	_, fontSizeY, _ := ui.fontSmall.SizeUTF8("A")
+	for {
+		event := level.Events[i]
+
+		// don't waste work on an empty string
+		if event != "" {
+			tex := ui.stringToTexture(event, sdl.Color{255, 0, 0, 0}, FontSmall)
+			_, _, w, h, err := tex.Query()
+			if err != nil {
+				panic(err)
+			}
+			ui.renderer.Copy(tex, nil, &sdl.Rect{5, int32(count*fontSizeY) + eventStart, w, h})
+		}
+		i = (i + 1) % (len(level.Events))
+		count++
+
+		if i == level.EventPos {
+			break
+		}
+	}
 
 	ui.renderer.Present()
 }
 
+func (ui *ui) renderDebug(level *game.Level, pos game.Pos) {
+	if level.Debug[pos] {
+		ui.textureAtlas.SetColorMod(128, 0, 0)
+	} else {
+		ui.textureAtlas.SetColorMod(255, 255, 255)
+	}
+}
+
 // drawLevel receives a level from the game and then renders the tiles row by row
 // if floor only is true, all tiles that are not Empty are drawn as dirt floor
-func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int32) {
-	var currentPos game.Pos
-	for y, row := range level.World {
-		for x, tile := range row { // TODO: replace tile
-			currentPos = game.Pos{X: int32(x), Y: int32(y)}
+func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int) {
+
+	for y, row := range level.Level {
+		// loop over each tile per row
+		for x, tile := range row {
 			if tile.Rune != game.Empty {
-				if tile.Type == "Floor" || tile.Type == "Player" || tile.Type == "Monster" {
-					continue
-				}
-
 				srcs := ui.textureIndex[tile.Rune]
-				v := rand.Intn(len(srcs))
-				src := srcs[v]
-				level.TileAtPos(currentPos).Variance = v                                          // this is super unnecessary, either remove the variance or find a better way of setting it.
-				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
+				src := srcs[ui.r.Intn(len(srcs))]
+				if tile.Visible || tile.Seen {
+					if tile.Type == "Floor" || tile.Type == "Player" || tile.Type == "Monster" {
+						continue
+					}
+					dst := sdl.Rect{X: int32(x*32 + offsetX), Y: int32(y*32 + offsetY), W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
+					pos := game.Pos{X: x, Y: y}
+					ui.renderDebug(level, pos)
+					if tile.Seen && !tile.Visible {
+						ui.textureAtlas.SetColorMod(128, 128, 128)
+					} else if tile.Visible {
+						ui.textureAtlas.SetColorMod(255, 255, 255)
+					}
 
-				pos := game.Pos{X: int32(x), Y: int32(y)}
-				if level.Debug[pos] {
-					ui.textureAtlas.SetColorMod(128, 0, 0)
-				} else {
-					ui.textureAtlas.SetColorMod(255, 255, 255)
+					ui.renderer.Copy(ui.textureAtlas, &src, &dst)
 				}
-
-				ui.renderer.Copy(ui.textureAtlas, &src, &dst)
 			}
 		}
 	}
 }
 
-func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int32) {
-	var currentPos game.Pos
-	for y, row := range level.World {
+func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int) {
+	for y, row := range level.Level {
 		for x, tile := range row {
 			if tile.HasFloor {
-				currentPos = game.Pos{X: int32(x), Y: int32(y)}
 				srcs := ui.textureIndex[game.DirtFloor]
-				v := rand.Intn(len(srcs))
-				src := srcs[v]
-				level.TileAtPos(currentPos).Variance = v // this is super unnecessary, either remove the variance or find a better way of setting it.
-				dst := sdl.Rect{X: int32(x*32) + offsetX, Y: int32(y*32) + offsetY, W: 32, H: 32}
-				pos := game.Pos{X: int32(x), Y: int32(y)}
-				if level.Debug[pos] {
-					ui.textureAtlas.SetColorMod(128, 0, 0)
-				} else {
-					ui.textureAtlas.SetColorMod(255, 255, 255)
-				}
+				src := srcs[ui.r.Intn(len(srcs))]
+				if tile.Visible || tile.Seen {
+					dst := sdl.Rect{X: int32(x*32 + offsetX), Y: int32(y*32 + offsetY), W: 32, H: 32}
+					pos := game.Pos{X: x, Y: y}
+					ui.renderDebug(level, pos)
+					if tile.Seen && !tile.Visible {
+						ui.textureAtlas.SetColorMod(128, 128, 128)
+					} else if tile.Visible {
+						ui.textureAtlas.SetColorMod(255, 255, 255)
+					}
 
-				ui.renderer.Copy(ui.textureAtlas, &src, &dst)
+					ui.renderer.Copy(ui.textureAtlas, &src, &dst)
+				}
 			}
 		}
 	}
+}
+
+func (ui *ui) drawOnFloor(level *game.Level, offsetX, offsetY int) {
+	for y, row := range level.Level {
+		for x, tile := range row {
+			if tile.HasFloor {
+				srcs := ui.textureIndex[game.BloodStained]
+				src := srcs[ui.r.Intn(len(srcs))]
+				if tile.BloodStained {
+					if tile.Seen || tile.Visible {
+						dst := sdl.Rect{X: int32(x*32 + offsetX), Y: int32(y*32 + offsetY), W: 32, H: 32}
+						if tile.Seen && !tile.Visible {
+							ui.textureAtlas.SetColorMod(128, 128, 128)
+						} else if tile.Visible {
+							ui.textureAtlas.SetColorMod(255, 255, 255)
+						}
+
+						ui.renderer.Copy(ui.textureAtlas, &src, &dst)
+					}
+				}
+			}
+		}
+	}
+}
+
+func (ui *ui) GetSinglePixelTex(colour sdl.Color) *sdl.Texture {
+	tex, err := ui.renderer.CreateTexture(sdl.PIXELFORMAT_ABGR8888, sdl.TEXTUREACCESS_STATIC, 1, 1)
+	if err != nil {
+		panic(err)
+	}
+	pixels := make([]byte, 4)
+	pixels[0] = colour.R
+	pixels[1] = colour.G
+	pixels[2] = colour.B
+	pixels[3] = colour.A
+	tex.Update(nil, pixels, 4)
+
+	return tex
 }
 
 func (ui *ui) GetInput() {
@@ -229,16 +396,16 @@ func (ui *ui) GetInput() {
 			case *sdl.MouseButtonEvent:
 				if e.State == sdl.PRESSED {
 					if e.Button == sdl.BUTTON_LEFT {
-						mousePos := game.Pos{X: e.X, Y: e.Y}
+						mousePos := game.Pos{X: int(e.X), Y: int(e.Y)}
 						ui.inputChan <- &game.Input{
 							Type:     game.Search,
 							MousePos: mousePos,
 						}
 					}
 					if e.Button == sdl.BUTTON_RIGHT {
-						mousePos := game.Pos{X: e.X, Y: e.Y}
+						mousePos := game.Pos{X: int(e.X), Y: int(e.Y)}
 						ui.inputChan <- &game.Input{
-							Type:     game.Search,
+							Type:     game.Inspect,
 							MousePos: mousePos,
 						}
 					}
@@ -270,6 +437,7 @@ func (ui *ui) GetInput() {
 				ui.inputChan <- &input
 			}
 		}
+
 		select {
 		case newLevel, ok := <-ui.levelChan:
 			if ok {
@@ -277,6 +445,6 @@ func (ui *ui) GetInput() {
 			}
 		default:
 		}
-		sdl.Delay(30)
+		sdl.Delay(10)
 	}
 }

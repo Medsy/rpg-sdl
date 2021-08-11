@@ -3,7 +3,11 @@ package game
 import (
 	"bufio"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 type Game struct {
@@ -28,6 +32,8 @@ const (
 	Inspect
 	QuitGame
 	CloseWindow
+
+	BloodVariantCount int = 12 // maybe I can get this from the atlas?
 )
 
 type Input struct {
@@ -36,11 +42,10 @@ type Input struct {
 	LevelChan chan *Level
 }
 
-var OffsetX int32
-var OffsetY int32
+var OffsetX, OffsetY int
 
 type Pos struct {
-	X, Y int32
+	X, Y int
 }
 
 type Entity struct {
@@ -51,10 +56,13 @@ type Entity struct {
 
 type Character struct {
 	Entity
-	Hitpoints int
-	Strength  int
-	Speed     float64
-	AP        float64
+	Type       string
+	Hitpoints  int
+	Strength   int
+	Speed      float64
+	SightRange int
+	AP         float64
+	Alive      bool
 }
 
 type Player struct {
@@ -62,11 +70,14 @@ type Player struct {
 }
 
 type Level struct {
-	World    [][]Tile
+	Level    [][]Tile
 	Player   *Player
 	Monsters map[Pos]*Monster
+	Events   []string
+	EventPos int
 	TileMap  map[rune]Tile
 	Debug    map[Pos]bool
+	R        *rand.Rand
 }
 
 type priorityPos struct {
@@ -92,6 +103,9 @@ func loadLevelFromFile(filename string) *Level {
 	defer file.Close()
 
 	level := &Level{}
+	level.Debug = make(map[Pos]bool)
+	level.Events = make([]string, 10)
+	level.R = rand.New(rand.NewSource(1))
 	scanner := bufio.NewScanner(file)
 	zoneRows := make([]string, 0)
 	longestRow := 0
@@ -104,35 +118,39 @@ func loadLevelFromFile(filename string) *Level {
 		}
 		index++
 	}
-	level.World = make([][]Tile, len(zoneRows))
+	level.Level = make([][]Tile, len(zoneRows))
 
 	level.Player = &Player{
 		Character: Character{
 			Entity: Entity{
 				Pos:  Pos{},
-				Rune: '@',
+				Rune: PlayerTile,
 				Name: "meds",
 			},
-			Hitpoints: 20,
-			Strength:  20,
-			Speed:     1.0,
-			AP:        0,
+			Type:       "Player",
+			Hitpoints:  20,
+			Strength:   3,
+			Speed:      1.0,
+			SightRange: 7,
+			Alive:      true,
+			AP:         0,
 		},
 	}
 
 	level.Monsters = make(map[Pos]*Monster)
 	level.LoadTileMap()
 
-	for i := range level.World {
-		level.World[i] = make([]Tile, longestRow)
+	for i := range level.Level {
+		level.Level[i] = make([]Tile, longestRow)
 	}
-	for y := 0; y < len(level.World); y++ {
+	for y := 0; y < len(level.Level); y++ {
 		line := zoneRows[y]
 		for x, r := range line {
 			var t Tile
 			switch r {
 			case ' ', '\n', '\t', '\r':
 				t = level.TileMap[r]
+
 			case '#':
 				t = level.TileMap[r]
 			case '.':
@@ -142,63 +160,111 @@ func loadLevelFromFile(filename string) *Level {
 			case '/':
 				t = level.TileMap[r]
 			case '@':
-				level.Player.X = int32(x)
-				level.Player.Y = int32(y)
+				level.Player.X = x
+				level.Player.Y = y
 				t = level.TileMap[DirtFloor]
 			case 'R':
-				p := Pos{X: int32(x), Y: int32(y)}
+				p := Pos{X: x, Y: y}
 				level.Monsters[p] = NewRat(p)
 				t = level.TileMap[DirtFloor]
 			case 'S':
-				p := Pos{X: int32(x), Y: int32(y)}
+				p := Pos{X: x, Y: y}
 				level.Monsters[p] = NewSpider(p)
 				t = level.TileMap[DirtFloor]
+			case '~':
+				t = level.TileMap[r]
 			default:
 				panic(fmt.Sprintf("Invalid rune '%s' in map at position [%d,%d]", string(r), y+1, x+1))
 			}
-			level.World[y][x] = t
+			level.Level[y][x] = t
 		}
 	}
-
+	level.lineOfSight()
 	return level
 }
 
 func canWalk(level *Level, pos Pos) bool {
-	t := level.World[pos.Y][pos.X]
-	return t.Passable
+	t := level.Level[pos.Y][pos.X]
+	switch t.Type {
+	case "Wall", "ClosedDoor", "Empty":
+		return false
+	}
+
+	_, exists := level.Monsters[pos]
+	return !exists
+}
+
+func canSeeThrough(level *Level, pos Pos) bool {
+	if inRange(level, pos) {
+		t := level.Level[pos.Y][pos.X]
+		switch t.Type {
+		case "Wall", "ClosedDoor", "Empty":
+			return false
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func (level *Level) lineOfSight() {
+	pos := level.Player.Pos
+	dist := level.Player.SightRange
+
+	for y := pos.Y - dist; y <= pos.Y+dist; y++ {
+		for x := pos.X - dist; x <= pos.X+dist; x++ {
+			xDelta := pos.X - x
+			yDelta := pos.Y - y
+			d := math.Sqrt(float64(xDelta*xDelta + yDelta*yDelta))
+			if d <= float64(dist) {
+				level.bresenham(pos, Pos{x, y})
+			}
+		}
+	}
 }
 
 func openDoor(level *Level, pos Pos) {
-	t := level.World[pos.Y][pos.X]
+	t := level.Level[pos.Y][pos.X]
 	if t.Rune == ClosedDoor {
-		level.World[pos.Y][pos.X] = level.TileMap[OpenDoor]
+		level.Level[pos.Y][pos.X] = level.TileMap[OpenDoor]
 	}
+	level.lineOfSight()
 }
 
 func (p *Player) Move(level *Level, to Pos) {
 	_, exists := level.Monsters[to]
 	if !exists {
 		p.Pos = to
+		for x, row := range level.Level {
+			for y, _ := range row {
+				level.Level[x][y].Visible = false
+			}
+		}
+		level.lineOfSight()
 	}
 }
 
 func (p *Player) Action(level *Level, target Pos) {
-	m, exists := level.Monsters[target]
-	if exists {
-		Attack(&p.Character, &m.Character)
-		if m.Hitpoints <= 0 {
-			level.TileAtPos(m.Pos).Passable = true
-			delete(level.Monsters, m.Pos)
-		}
-		if p.Hitpoints <= 0 {
-			panic("You Died")
-		}
-	}
 
 	t := level.TileAtPos(target)
 	if t.Name == "Closed Door" {
 		openDoor(level, target)
 	}
+
+	m, exists := level.Monsters[target]
+	if exists {
+		events := Attack(&p.Character, &m.Character)
+		level.AddEvents(events...)
+
+		if p.Hitpoints <= 0 {
+			level.AddEvents("you died")
+			p.Alive = false
+		}
+	}
+}
+
+func inRange(level *Level, pos Pos) bool {
+	return int(pos.X) < len(level.Level[0]) && int(pos.Y) < len(level.Level) && pos.X >= 0 && pos.Y >= 0
 }
 
 func (g *Game) handleInput(input *Input) {
@@ -245,9 +311,18 @@ func (g *Game) handleInput(input *Input) {
 		target := screenToWorldPos(input.MousePos)
 		t := level.TileAtPos(target)
 		if t.Rune == DirtFloor {
-			level.astar(p.Pos, target)
 		} else if t.Rune == ClosedDoor {
 			openDoor(level, target)
+		}
+	case Inspect:
+		tartget := screenToWorldPos(input.MousePos)
+		t := level.TileAtPos(tartget)
+		if t.HasFloor {
+			spew.Dump(t)
+		}
+		m, exists := level.Monsters[tartget]
+		if exists {
+			spew.Dump(m)
 		}
 	case CloseWindow:
 		close(input.LevelChan)
@@ -265,9 +340,23 @@ func (g *Game) handleInput(input *Input) {
 	}
 }
 
+func (level *Level) AddEvents(events ...string) {
+	for _, event := range events {
+		level.Events[level.EventPos] = event
+
+		level.EventPos++
+		if level.EventPos == len(level.Events) {
+			level.EventPos = 0
+		}
+
+	}
+}
+
 func screenToWorldPos(pos Pos) Pos {
 	return Pos{(pos.X - OffsetX) / 32, (pos.Y - OffsetY) / 32}
 }
+
+var eventCount int
 
 func (g *Game) Run() {
 	fmt.Println("Starting...")
@@ -275,15 +364,24 @@ func (g *Game) Run() {
 	for _, lchan := range g.LevelChans {
 		lchan <- g.Level
 	}
+	count := 1
+	for _, m := range g.Level.Monsters {
+		m.Name = m.Name + " " + fmt.Sprint(count)
+		count++
+	}
 
 	for input := range g.InputChan {
 		if input.Type == QuitGame {
 			return
 		}
-		g.handleInput(input)
+		g.Level.Debug = map[Pos]bool{}
 
-		for _, monster := range g.Level.Monsters {
-			monster.Update(g.Level)
+		if g.Level.Player.Alive {
+			for _, monster := range g.Level.Monsters {
+				monster.Update(g.Level)
+			}
+
+			g.handleInput(input)
 		}
 
 		if len(g.LevelChans) == 0 {
