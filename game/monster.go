@@ -2,6 +2,7 @@ package game
 
 import (
 	"fmt"
+	"math"
 )
 
 type Monster struct {
@@ -9,11 +10,11 @@ type Monster struct {
 }
 
 func NewRat(p Pos) *Monster {
-	return &Monster{Character{Entity{p, 'R', "Rat"}, "Monster", 5, 1, 1.5, 10, 0.0, true}}
+	return &Monster{Character{Entity{p, 'R', "Rat"}, "Monster", 5, 1, 1.5, 3, 0.0, true}}
 }
 
 func NewSpider(p Pos) *Monster {
-	return &Monster{Character{Entity{p, 'S', "Spider"}, "Monster", 7, 2, 1, 10, 0.0, true}}
+	return &Monster{Character{Entity{p, 'S', "Spider"}, "Monster", 7, 0, .25, 5, 0.0, true}}
 }
 
 func (m *Monster) Update(level *Level) {
@@ -38,10 +39,6 @@ func (m *Monster) Update(level *Level) {
 	}
 }
 
-func (m *Monster) findPlayer(level *Level) {
-
-}
-
 func (m *Monster) Move(to Pos, level *Level) bool {
 	moved := false
 	tile := *level.TileAtPos(to)
@@ -51,6 +48,7 @@ func (m *Monster) Move(to Pos, level *Level) bool {
 			delete(level.Monsters, m.Pos)
 			level.Monsters[to] = m
 			m.Pos = to
+			fmt.Println("moved!")
 			m.AP -= float64(tile.Cost)
 			moved = true
 		} else if to == level.Player.Pos {
@@ -60,6 +58,32 @@ func (m *Monster) Move(to Pos, level *Level) bool {
 	}
 
 	return moved
+}
+
+// TODO: consider combining with lineOfSight taking in an character or entity
+func (m *Monster) isPlayerInRange(level *Level) bool {
+	pos := m.Pos
+	dist := m.SightRange
+	player := level.Player.Pos
+
+	for y := pos.Y - dist; y <= pos.Y+dist; y++ {
+		for x := pos.X - dist; x <= pos.X+dist; x++ {
+			xDelta := pos.X - x
+			yDelta := pos.Y - y
+			d := math.Sqrt(float64(xDelta*xDelta + yDelta*yDelta))
+			if d <= float64(dist) {
+				line := level.bresenham(pos, Pos{x, y})
+				for _, p := range line {
+					level.Debug[pos] = true
+					if p == player {
+						fmt.Println("target found")
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (m *Monster) Dead(level *Level) {

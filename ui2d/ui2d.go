@@ -22,7 +22,7 @@ type ui struct {
 	fontSmall       *ttf.Font
 	fontMedium      *ttf.Font
 	fontLarge       *ttf.Font
-	eventBackground *sdl.Texture
+	panelBackground *sdl.Texture
 	textureIndex    map[rune][]sdl.Rect
 	centerX         int
 	centerY         int
@@ -99,8 +99,8 @@ func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui.centerX = -1
 	ui.centerY = -1
 
-	ui.eventBackground = ui.GetSinglePixelTex(sdl.Color{0, 0, 0, 128})
-	ui.eventBackground.SetBlendMode(sdl.BLENDMODE_BLEND)
+	ui.panelBackground = ui.GetSinglePixelTex(sdl.Color{0, 0, 0, 128})
+	ui.panelBackground.SetBlendMode(sdl.BLENDMODE_BLEND)
 
 	return ui
 }
@@ -210,16 +210,17 @@ func (ui *ui) Draw(level *game.Level) {
 
 	threshold := 5
 	if level.Player.X > ui.centerX+threshold {
-		ui.centerX++
-	}
-	if level.Player.X < ui.centerX-threshold {
-		ui.centerX--
-	}
-	if level.Player.Y > ui.centerY+threshold {
-		ui.centerY++
-	}
-	if level.Player.Y < ui.centerY-threshold {
-		ui.centerY--
+		diff := level.Player.X - (ui.centerX + threshold)
+		ui.centerX += diff
+	} else if level.Player.X < ui.centerX-threshold {
+		diff := (ui.centerX - threshold) - level.Player.X
+		ui.centerX -= diff
+	} else if level.Player.Y > ui.centerY+threshold {
+		diff := level.Player.Y - (ui.centerY + threshold)
+		ui.centerY += diff
+	} else if level.Player.Y < ui.centerY-threshold {
+		diff := (ui.centerY - threshold) - level.Player.Y
+		ui.centerY -= diff
 	}
 
 	game.OffsetX = (ui.winWidth / 2) - (ui.centerX * 32)
@@ -245,34 +246,7 @@ func (ui *ui) Draw(level *game.Level) {
 	playerSrcRect := ui.textureIndex[game.PlayerTile][0]
 	ui.renderer.Copy(ui.textureAtlas, &playerSrcRect, &sdl.Rect{X: int32(level.Player.X*32 + game.OffsetX), Y: int32(level.Player.Y*32 + game.OffsetY), W: 32, H: 32}) //TODO: custom rect builder
 
-	eventStart := int32(float64(ui.winHeight) * .72)
-	eventWidth := int32(float64(ui.winWidth) * .30)
-
-	ui.renderer.Copy(ui.eventBackground, nil, &sdl.Rect{0, eventStart, eventWidth, int32(ui.winHeight) - eventStart})
-
-	// loop and print events
-	i := level.EventPos
-	count := 0
-	_, fontSizeY, _ := ui.fontSmall.SizeUTF8("A")
-	for {
-		event := level.Events[i]
-
-		// don't waste work on an empty string
-		if event != "" {
-			tex := ui.stringToTexture(event, sdl.Color{255, 0, 0, 0}, FontSmall)
-			_, _, w, h, err := tex.Query()
-			if err != nil {
-				panic(err)
-			}
-			ui.renderer.Copy(tex, nil, &sdl.Rect{5, int32(count*fontSizeY) + eventStart, w, h})
-		}
-		i = (i + 1) % (len(level.Events))
-		count++
-
-		if i == level.EventPos {
-			break
-		}
-	}
+	ui.drawUI(level)
 
 	ui.renderer.Present()
 }
@@ -361,6 +335,54 @@ func (ui *ui) drawOnFloor(level *game.Level, offsetX, offsetY int) {
 	}
 }
 
+func (ui *ui) drawUI(level *game.Level) {
+	eventStart := int32(float64(ui.winHeight) * .72)
+	eventWidth := int32(float64(ui.winWidth) * .30)
+
+	ui.renderer.Copy(ui.panelBackground, nil, &sdl.Rect{0, eventStart, eventWidth, int32(ui.winHeight) - eventStart})
+
+	// loop and print events
+	i := level.EventPos
+	count := 0
+	_, fontSizeY, _ := ui.fontSmall.SizeUTF8("A")
+	for {
+		event := level.Events[i]
+
+		if event != "" {
+			tex := ui.stringToTexture(event, sdl.Color{255, 0, 0, 0}, FontSmall)
+			_, _, w, h, err := tex.Query()
+			if err != nil {
+				panic(err)
+			}
+			ui.renderer.Copy(tex, nil, &sdl.Rect{5, int32(count*fontSizeY) + eventStart, w, h})
+		}
+		i = (i + 1) % (len(level.Events))
+		count++
+
+		if i == level.EventPos {
+			break
+		}
+	}
+
+	statsStart := int32(float64(ui.winHeight) * .02)
+	statsHeight := int32(float64(ui.winHeight) * .50)
+	statsWidth := int32(float64(ui.winWidth) * .20)
+
+	ui.renderer.Copy(ui.panelBackground, nil, &sdl.Rect{0, statsStart, statsWidth, statsHeight})
+
+	stats := level.Player.GetStatStrings()
+
+	_, fontSizeY, _ = ui.fontMedium.SizeUTF8("A")
+	for i, stat := range stats {
+		tex := ui.stringToTexture(stat, sdl.Color{255, 255, 255, 0}, FontMedium)
+		_, _, w, h, err := tex.Query()
+		if err != nil {
+			panic(err)
+		}
+		ui.renderer.Copy(tex, nil, &sdl.Rect{10, int32(i*fontSizeY) + statsStart, w, h})
+	}
+}
+
 func (ui *ui) GetSinglePixelTex(colour sdl.Color) *sdl.Texture {
 	tex, err := ui.renderer.CreateTexture(sdl.PIXELFORMAT_ABGR8888, sdl.TEXTUREACCESS_STATIC, 1, 1)
 	if err != nil {
@@ -422,29 +444,24 @@ func (ui *ui) GetInput() {
 					ui.QuitSDL()
 					return
 				case sdl.K_UP, sdl.K_w:
-					input.Type = game.Up
+					ui.inputChan <- &game.Input{Type: game.Up}
 				case sdl.K_DOWN, sdl.K_s:
-					input.Type = game.Down
+					ui.inputChan <- &game.Input{Type: game.Down}
 				case sdl.K_LEFT, sdl.K_a:
-					input.Type = game.Left
+					ui.inputChan <- &game.Input{Type: game.Left}
 				case sdl.K_RIGHT, sdl.K_d:
-					input.Type = game.Right
-				case sdl.K_SPACE:
-					input.Type = game.Search
+					ui.inputChan <- &game.Input{Type: game.Right}
 				}
 			}
-			if input.Type != game.None {
-				ui.inputChan <- &input
-			}
-		}
 
-		select {
-		case newLevel, ok := <-ui.levelChan:
-			if ok {
-				ui.Draw(newLevel)
+			select {
+			case newLevel, ok := <-ui.levelChan:
+				if ok {
+					ui.Draw(newLevel)
+				}
+			default:
 			}
-		default:
+			sdl.Delay(16)
 		}
-		sdl.Delay(10)
 	}
 }

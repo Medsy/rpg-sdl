@@ -4,6 +4,7 @@ import (
 	"math"
 )
 
+// Might be useful for flood effects and stuff
 func (level *Level) bfsearch(start Pos) {
 	edge := make([]Pos, 0, 8)
 	edge = append(edge, start)
@@ -23,8 +24,8 @@ func (level *Level) bfsearch(start Pos) {
 	}
 }
 
-func (level *Level) bresenham(start Pos, end Pos) {
-
+func (level *Level) bresenham(start Pos, end Pos) []Pos {
+	var line []Pos
 	steep := math.Abs(float64(end.Y-start.Y)) > math.Abs(float64(end.X-start.X))
 	if steep {
 		start.X, start.Y = start.Y, start.X
@@ -48,10 +49,9 @@ func (level *Level) bresenham(start Pos, end Pos) {
 			} else {
 				pos = Pos{x, y}
 			}
-			level.Level[pos.Y][pos.X].Visible = true
-			level.Level[pos.Y][pos.X].Seen = true
+			line = append(line, pos)
 			if !canSeeThrough(level, pos) {
-				return
+				break
 			}
 			err += deltaY
 			if 2*err >= deltaX {
@@ -68,10 +68,9 @@ func (level *Level) bresenham(start Pos, end Pos) {
 			} else {
 				pos = Pos{x, y}
 			}
-			level.Level[pos.Y][pos.X].Visible = true
-			level.Level[pos.Y][pos.X].Seen = true
+			line = append(line, pos)
 			if !canSeeThrough(level, pos) {
-				return
+				break
 			}
 			err += deltaY
 			if 2*err >= deltaX {
@@ -80,6 +79,7 @@ func (level *Level) bresenham(start Pos, end Pos) {
 			}
 		}
 	}
+	return line
 }
 
 func (level *Level) astar(from, to Pos) (path []Pos, dist int, found bool) {

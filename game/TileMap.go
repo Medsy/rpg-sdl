@@ -21,6 +21,8 @@ const (
 	Spider       rune = 'S'
 	Water        rune = '~'
 	BloodStained rune = 'b'
+	UpStairs     rune = 'u'
+	DownStairs   rune = 'd'
 	Empty        rune = 0
 )
 
@@ -55,11 +57,25 @@ func (l *Level) LoadTileMap() {
 			Cost:     1,
 		},
 		{
+			Name:     "Upstairs",
+			Type:     "Upstairs",
+			Rune:     UpStairs,
+			HasFloor: true,
+			Cost:     1,
+		},
+		{
+			Name:     "Downstairs",
+			Type:     "Downstairs",
+			Rune:     DownStairs,
+			HasFloor: true,
+			Cost:     1,
+		},
+		{
 			Name:     "Water",
 			Type:     "Water",
 			Rune:     Water,
 			HasFloor: true,
-			Cost:     3,
+			Cost:     2,
 		},
 		{ // I don't like this
 			Type:     "Empty",
