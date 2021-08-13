@@ -4,13 +4,6 @@ import (
 	"fmt"
 )
 
-// type Combatant interface {
-// 	GetActionPoints() float64
-// 	SetActionPoints(float64)
-// 	GetHitpoints() int
-// 	SetHitpoints() int
-// }
-
 // Attack c1 attacks c2
 func Attack(c1, c2 *Character) []string {
 	var events []string

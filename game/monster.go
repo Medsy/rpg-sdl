@@ -7,51 +7,63 @@ import (
 
 type Monster struct {
 	Character
+	Path []Pos
 }
 
 func NewRat(p Pos) *Monster {
-	return &Monster{Character{Entity{p, 'R', "Rat"}, "Monster", 5, 1, 1.5, 3, 0.0, true}}
+	return &Monster{Character{Entity{p, 'R', "Rat"}, "Monster", 5, 1, 2, 1.5, 3, 0.0, true}, make([]Pos, 0)}
 }
 
 func NewSpider(p Pos) *Monster {
-	return &Monster{Character{Entity{p, 'S', "Spider"}, "Monster", 7, 0, .25, 5, 0.0, true}}
+	return &Monster{Character{Entity{p, 'S', "Spider"}, "Monster", 7, 0, 5, .5, 5, .5, true}, make([]Pos, 0)} // this is a little fucky wucky
+}
+
+func (m *Monster) monsterToString() string {
+	return fmt.Sprintf("{name: %s, HP: %d, SightRange: %d, AP: %f, Speed: %f}", m.Name, m.Hitpoints, m.SightRange, m.AP, m.Speed) // TODO: add all monsters stats to be printed
 }
 
 func (m *Monster) Update(level *Level) {
+	var moveIndex int
 	p := level.Player
-	path, _, found := level.astar(m.Pos, p.Pos)
-	moveIndex := 1
+
+	if len(m.Path) == 0 {
+		m.Path, _, _ = level.astar(m.Pos, p.Pos)
+		moveIndex = 1
+	}
 
 	if m.Hitpoints < 0 {
 		m.Dead(level)
 	}
 
-	if found && p.Alive {
+	if len(m.Path) != 0 && p.Alive {
 		m.AP += m.Speed
 		apInt := int(m.AP)
 		for i := 0; i < apInt; i++ {
-			if moveIndex < len(path) {
-				if m.Move(path[moveIndex], level) {
+			if moveIndex < len(m.Path) {
+				if m.Move(m.Path[moveIndex], level) {
 					moveIndex++
 				}
 			}
+			m.Path = m.Path[:0]
 		}
 	}
 }
 
 func (m *Monster) Move(to Pos, level *Level) bool {
 	moved := false
+	p := level.Player
 	tile := *level.TileAtPos(to)
 	if m.Hitpoints > 0 && m.AP >= float64(tile.Cost) {
 		_, exists := level.Monsters[to]
-		if !exists && to != level.Player.Pos {
+		if !exists && to != p.Pos {
 			delete(level.Monsters, m.Pos)
 			level.Monsters[to] = m
 			m.Pos = to
 			fmt.Println("moved!")
 			m.AP -= float64(tile.Cost)
 			moved = true
-		} else if to == level.Player.Pos {
+		} else if m.dist(p.Pos) == 1 && m.AP >= 1 {
+			fmt.Println(p.posToString(), m.posToString())
 			events := Attack(&m.Character, &level.Player.Character)
 			level.AddEvents(events...)
 		}
@@ -60,7 +72,6 @@ func (m *Monster) Move(to Pos, level *Level) bool {
 	return moved
 }
 
-// TODO: consider combining with lineOfSight taking in an character or entity
 func (m *Monster) isPlayerInRange(level *Level) bool {
 	pos := m.Pos
 	dist := m.SightRange
@@ -74,11 +85,11 @@ func (m *Monster) isPlayerInRange(level *Level) bool {
 			if d <= float64(dist) {
 				line := level.bresenham(pos, Pos{x, y})
 				for _, p := range line {
-					level.Debug[pos] = true
 					if p == player {
 						fmt.Println("target found")
 						return true
 					}
+					level.Debug[p] = true
 				}
 			}
 		}

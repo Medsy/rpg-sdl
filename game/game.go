@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 type Game struct {
@@ -63,6 +61,7 @@ type Character struct {
 	Type       string
 	Hitpoints  int
 	Strength   int
+	Defence    int
 	Speed      float64
 	SightRange int
 	AP         float64
@@ -77,6 +76,7 @@ type Level struct {
 	Level    [][]Tile
 	Player   *Player
 	Monsters map[Pos]*Monster
+	Items    map[Pos]*Item
 	StairMap map[Pos]*LevelPos
 	Events   []string
 	EventPos int
@@ -181,8 +181,9 @@ func loadLevels() map[string]*Level {
 			Type:       "Player",
 			Hitpoints:  50,
 			Strength:   3,
+			Defence:    5,
 			Speed:      1.0,
-			SightRange: 5,
+			SightRange: 10,
 			Alive:      true,
 			AP:         0,
 		},
@@ -225,6 +226,7 @@ func loadLevels() map[string]*Level {
 		level.Player = newPlayer
 
 		level.Monsters = make(map[Pos]*Monster)
+		level.Items = make(map[Pos]*Item)
 		level.LoadTileMap()
 
 		for i := range level.Level {
@@ -234,6 +236,7 @@ func loadLevels() map[string]*Level {
 			line := zoneRows[y]
 			for x, r := range line {
 				var t Tile
+				p := Pos{x, y}
 				switch r {
 				case ' ', '\n', '\t', '\r':
 					t = level.TileMap[Empty]
@@ -246,16 +249,19 @@ func loadLevels() map[string]*Level {
 				case '/':
 					t = level.TileMap[r]
 				case '@':
-					level.Player.X = x
-					level.Player.Y = y
+					level.Player.Pos = p
 					t = level.TileMap[DirtFloor]
 				case 'R':
-					p := Pos{X: x, Y: y}
 					level.Monsters[p] = NewRat(p)
 					t = level.TileMap[DirtFloor]
 				case 'S':
-					p := Pos{X: x, Y: y}
 					level.Monsters[p] = NewSpider(p)
+					t = level.TileMap[DirtFloor]
+				case 's':
+					level.Items[p] = NewSword(p)
+					t = level.TileMap[DirtFloor]
+				case 'h':
+					level.Items[p] = NewHelmet(p)
 					t = level.TileMap[DirtFloor]
 				case '~':
 					t = level.TileMap[r]
@@ -264,7 +270,7 @@ func loadLevels() map[string]*Level {
 				case 'd':
 					t = level.TileMap[r]
 				default:
-					panic(fmt.Sprintf("Invalid rune '%s' in map at position [%d,%d]", string(r), y+1, x+1))
+					panic(fmt.Sprintf("invalid rune '%s' in map at position [%d,%d]", string(r), y+1, x+1))
 				}
 				level.Level[y][x] = t
 			}
@@ -427,11 +433,12 @@ func (g *Game) handleInput(input *Input) {
 		}
 	case Inspect:
 		target := screenToWorldPos(input.MousePos)
-		spew.Dump(level.TileAtPos(target))
+		fmt.Printf("tilePos: %s, tile: %s\n", target.posToString(), level.TileAtPos(target).Name)
 
 		m, exists := level.Monsters[target]
 		if exists {
-			spew.Dump(m)
+			fmt.Println(m.monsterToString())
+			fmt.Println(m.Path)
 		}
 	case CloseWindow:
 		close(input.LevelChan)
@@ -479,28 +486,28 @@ func screenToWorldPos(pos Pos) Pos {
 }
 
 //  apparently ambit means range
-func (e *Entity) InRange(ambit int, p Pos) bool {
+func (e *Entity) dist(p Pos) int {
 	dist := int(math.Abs(float64(p.X-e.X) + float64(e.Y-p.Y)))
 	fmt.Printf("e.Pos: %s p.Pos: %s\n", e.posToString(), p.posToString())
 	fmt.Printf("formula: (%d - %d) + (%d - %d)\n", e.X, p.X, e.Y, p.Y)
 	fmt.Printf("calc dist: %d\n", dist)
-	fmt.Printf("in range: %v\n", dist <= ambit)
-	return dist <= ambit
+	return dist
 }
 
 func (g *Game) Run() {
 	fmt.Println("Starting...")
 
+	g.CurrentLevel.lineOfSight()
+
 	for _, lchan := range g.LevelChans {
 		lchan <- g.CurrentLevel
 	}
+
 	count := 1
 	for _, m := range g.CurrentLevel.Monsters {
 		m.Name = m.Name + " " + fmt.Sprint(count)
 		count++
 	}
-
-	g.CurrentLevel.lineOfSight()
 
 	for input := range g.InputChan {
 		if input.Type == QuitGame {
@@ -526,7 +533,6 @@ func (g *Game) Run() {
 		for _, lchan := range g.LevelChans {
 			lchan <- g.CurrentLevel
 		}
-		fmt.Println(g.CurrentLevel.Debug)
 		g.CurrentLevel.Player.AP += g.CurrentLevel.Player.Speed
 	}
 }

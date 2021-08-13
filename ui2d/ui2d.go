@@ -32,6 +32,7 @@ type ui struct {
 	strToTexSmall   map[string]*sdl.Texture
 	strToTexMedium  map[string]*sdl.Texture
 	strToTexLarge   map[string]*sdl.Texture
+	debug           bool
 }
 
 type FontSize int
@@ -44,6 +45,9 @@ const (
 
 func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui := &ui{}
+
+	ui.debug = false
+
 	ui.inputChan = inputChan
 	ui.levelChan = levelChan
 	ui.strToTexSmall = make(map[string]*sdl.Texture)  // TODO: maybe prevent using 3 maps by combining the
@@ -252,10 +256,12 @@ func (ui *ui) Draw(level *game.Level) {
 }
 
 func (ui *ui) renderDebug(level *game.Level, pos game.Pos) {
-	if level.Debug[pos] {
-		ui.textureAtlas.SetColorMod(128, 0, 0)
-	} else {
-		ui.textureAtlas.SetColorMod(255, 255, 255)
+	if ui.debug {
+		if level.Debug[pos] {
+			ui.textureAtlas.SetColorMod(128, 0, 0)
+		} else {
+			ui.textureAtlas.SetColorMod(255, 255, 255)
+		}
 	}
 }
 
@@ -275,12 +281,12 @@ func (ui *ui) drawLevel(level *game.Level, offsetX, offsetY int) {
 					}
 					dst := sdl.Rect{X: int32(x*32 + offsetX), Y: int32(y*32 + offsetY), W: 32, H: 32} // TODO: maybe add a util to build rects with a configurable spritesheet defaults eg x,y,w,h
 					pos := game.Pos{X: x, Y: y}
-					ui.renderDebug(level, pos)
 					if tile.Seen && !tile.Visible {
 						ui.textureAtlas.SetColorMod(128, 128, 128)
 					} else if tile.Visible {
 						ui.textureAtlas.SetColorMod(255, 255, 255)
 					}
+					ui.renderDebug(level, pos)
 
 					ui.renderer.Copy(ui.textureAtlas, &src, &dst)
 				}
@@ -298,12 +304,12 @@ func (ui *ui) drawFloor(level *game.Level, offsetX, offsetY int) {
 				if tile.Visible || tile.Seen {
 					dst := sdl.Rect{X: int32(x*32 + offsetX), Y: int32(y*32 + offsetY), W: 32, H: 32}
 					pos := game.Pos{X: x, Y: y}
-					ui.renderDebug(level, pos)
 					if tile.Seen && !tile.Visible {
 						ui.textureAtlas.SetColorMod(128, 128, 128)
 					} else if tile.Visible {
 						ui.textureAtlas.SetColorMod(255, 255, 255)
 					}
+					ui.renderDebug(level, pos)
 
 					ui.renderer.Copy(ui.textureAtlas, &src, &dst)
 				}
@@ -328,6 +334,17 @@ func (ui *ui) drawOnFloor(level *game.Level, offsetX, offsetY int) {
 						}
 
 						ui.renderer.Copy(ui.textureAtlas, &src, &dst)
+					}
+				}
+				for pos, item := range level.Items {
+					tile := level.TileAtPos(pos)
+					ItemSrcRect := ui.textureIndex[item.Rune][0]
+					if tile.Visible || tile.Seen {
+						ui.textureAtlas.SetColorMod(255, 255, 255)
+						if tile.Seen && !tile.Visible {
+							ui.textureAtlas.SetColorMod(128, 128, 128)
+						}
+						ui.renderer.Copy(ui.textureAtlas, &ItemSrcRect, &sdl.Rect{X: int32(pos.X*32 + game.OffsetX), Y: int32(pos.Y*32 + game.OffsetY), W: 32, H: 32})
 					}
 				}
 			}
@@ -453,7 +470,6 @@ func (ui *ui) GetInput() {
 					ui.inputChan <- &game.Input{Type: game.Right}
 				}
 			}
-
 			select {
 			case newLevel, ok := <-ui.levelChan:
 				if ok {
@@ -461,7 +477,7 @@ func (ui *ui) GetInput() {
 				}
 			default:
 			}
-			sdl.Delay(16)
 		}
+		sdl.Delay(16)
 	}
 }
