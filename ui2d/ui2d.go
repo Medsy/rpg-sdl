@@ -28,11 +28,18 @@ type ui struct {
 	centerY         int
 	levelChan       chan *game.Level
 	inputChan       chan *game.Input
-	r               *rand.Rand
-	strToTexSmall   map[string]*sdl.Texture
-	strToTexMedium  map[string]*sdl.Texture
-	strToTexLarge   map[string]*sdl.Texture
-	debug           bool
+
+	prevKeyboardState []uint8
+	keyboardState     []uint8
+	currentMouseState *mouseState
+	prevMouseState    *mouseState
+
+	r *rand.Rand
+
+	strToTexSmall  map[string]*sdl.Texture
+	strToTexMedium map[string]*sdl.Texture
+	strToTexLarge  map[string]*sdl.Texture
+	debug          bool
 }
 
 type FontSize int
@@ -42,6 +49,14 @@ const (
 	FontMedium
 	FontLarge
 )
+
+func Init() {
+	// sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
+	err := sdl.Init(sdl.INIT_EVERYTHING)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui := &ui{}
@@ -57,12 +72,7 @@ func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 	ui.winHeight = 720
 	ui.r = rand.New(rand.NewSource(1))
 
-	sdl.LogSetAllPriority(sdl.LOG_PRIORITY_VERBOSE)
-	err := sdl.Init(sdl.INIT_EVERYTHING)
-	if err != nil {
-		panic(err)
-	}
-
+	var err error
 	ui.window, err = sdl.CreateWindow("rpg-sdl", 200, 200,
 		int32(ui.winWidth), int32(ui.winHeight), sdl.WINDOW_SHOWN)
 	if err != nil {
@@ -99,6 +109,12 @@ func NewUI(inputChan chan *game.Input, levelChan chan *game.Level) *ui {
 		panic(err)
 	}
 	ui.loadTextureIndex()
+
+	ui.keyboardState = sdl.GetKeyboardState()
+	ui.prevKeyboardState = make([]uint8, len(ui.keyboardState))
+	for i, v := range ui.keyboardState {
+		ui.prevKeyboardState[i] = v
+	}
 
 	ui.centerX = -1
 	ui.centerY = -1
@@ -416,68 +432,57 @@ func (ui *ui) GetSinglePixelTex(colour sdl.Color) *sdl.Texture {
 }
 
 func (ui *ui) GetInput() {
+	var newLevel *game.Level
+	ui.prevMouseState = getMouseState()
+
 	for {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
-			var input game.Input
 			switch e := event.(type) {
 			case *sdl.QuitEvent:
-				input.Type = game.CloseWindow
-				input.LevelChan = ui.levelChan
+				ui.inputChan <- &game.Input{Type: game.QuitGame}
 				ui.QuitSDL()
 				return
 			case *sdl.WindowEvent:
 				if e.Event == sdl.WINDOWEVENT_CLOSE {
-					input.Type = game.CloseWindow
-					input.LevelChan = ui.levelChan
+					ui.inputChan <- &game.Input{Type: game.QuitGame}
 					ui.QuitSDL()
 					return
-				}
-			case *sdl.MouseButtonEvent:
-				if e.State == sdl.PRESSED {
-					if e.Button == sdl.BUTTON_LEFT {
-						mousePos := game.Pos{X: int(e.X), Y: int(e.Y)}
-						ui.inputChan <- &game.Input{
-							Type:     game.Search,
-							MousePos: mousePos,
-						}
-					}
-					if e.Button == sdl.BUTTON_RIGHT {
-						mousePos := game.Pos{X: int(e.X), Y: int(e.Y)}
-						ui.inputChan <- &game.Input{
-							Type:     game.Inspect,
-							MousePos: mousePos,
-						}
-					}
-				}
-			case *sdl.KeyboardEvent:
-				if e.Type != sdl.KEYDOWN {
-					break
-				}
-				var key sdl.Keycode
-				switch key = e.Keysym.Sym; key {
-				case sdl.K_ESCAPE:
-					input.Type = game.CloseWindow
-					input.LevelChan = ui.levelChan
-					ui.QuitSDL()
-					return
-				case sdl.K_UP, sdl.K_w:
-					ui.inputChan <- &game.Input{Type: game.Up}
-				case sdl.K_DOWN, sdl.K_s:
-					ui.inputChan <- &game.Input{Type: game.Down}
-				case sdl.K_LEFT, sdl.K_a:
-					ui.inputChan <- &game.Input{Type: game.Left}
-				case sdl.K_RIGHT, sdl.K_d:
-					ui.inputChan <- &game.Input{Type: game.Right}
 				}
 			}
+			ui.currentMouseState = getMouseState()
+
+			var ok bool
 			select {
-			case newLevel, ok := <-ui.levelChan:
+			case newLevel, ok = <-ui.levelChan:
 				if ok {
-					ui.Draw(newLevel)
 				}
 			default:
 			}
 		}
-		sdl.Delay(16)
+
+		ui.Draw(newLevel)
+
+		var input game.Input
+		if sdl.GetKeyboardFocus() == ui.window || sdl.GetMouseFocus() == ui.window {
+			if ui.keyDownOnce(sdl.SCANCODE_UP) || ui.keyDownOnce(sdl.SCANCODE_W) {
+				input.Type = game.Up
+			} else if ui.keyDownOnce(sdl.SCANCODE_DOWN) || ui.keyDownOnce(sdl.SCANCODE_S) {
+				input.Type = game.Down
+			} else if ui.keyDownOnce(sdl.SCANCODE_LEFT) || ui.keyDownOnce(sdl.SCANCODE_A) {
+				input.Type = game.Left
+			} else if ui.keyDownOnce(sdl.SCANCODE_RIGHT) || ui.keyDownOnce(sdl.SCANCODE_D) {
+				input.Type = game.Right
+			}
+		}
+
+		for i, v := range ui.keyboardState {
+			ui.prevKeyboardState[i] = v
+		}
+
+		if input.Type != game.None {
+			ui.inputChan <- &input
+		}
+		ui.prevMouseState = ui.currentMouseState
+		sdl.Delay(10)
 	}
 }

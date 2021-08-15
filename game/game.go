@@ -132,14 +132,14 @@ func (game *Game) loadWorld() {
 		if rowIndex == 0 {
 			game.CurrentLevel = game.Levels[row[0]]
 			if game.CurrentLevel == nil {
-				fmt.Println("couldn't find currentlevel name in world file:", row[0])
+				// fmt.Println("couldn't find currentlevel name in world file:", row[0])
 				panic(nil)
 			}
 			continue
 		}
 		levelWithStairs := game.Levels[row[0]]
 		if levelWithStairs == nil {
-			fmt.Println("couldn't find level name 1 in world file")
+			// fmt.Println("couldn't find level name 1 in world file")
 			panic(nil)
 		}
 		x, err := strconv.ParseInt(row[1], 10, 64)
@@ -248,6 +248,8 @@ func loadLevels() map[string]*Level {
 					t = level.TileMap[r]
 				case '/':
 					t = level.TileMap[r]
+				case 'G':
+					t = level.TileMap[r]
 				case '@':
 					level.Player.Pos = p
 					t = level.TileMap[DirtFloor]
@@ -283,7 +285,7 @@ func loadLevels() map[string]*Level {
 func canWalk(level *Level, pos Pos) bool {
 	t := level.Level[pos.Y][pos.X]
 	switch t.Type {
-	case "Wall", "ClosedDoor", "Empty":
+	case "Wall", "ClosedDoor", "Glass", "Empty":
 		return false
 	}
 
@@ -432,13 +434,17 @@ func (g *Game) handleInput(input *Input) {
 			openDoor(level, target)
 		}
 	case Inspect:
+		// TODO: need a way to get screen info without an out of bound error clicking in a pos where there isn't a tile
 		target := screenToWorldPos(input.MousePos)
-		fmt.Printf("tilePos: %s, tile: %s\n", target.posToString(), level.TileAtPos(target).Name)
+		tile := level.TileAtPos(target)
+		if tile.Rune == Empty {
+			fmt.Printf("tilePos: %s, tile: %s\n", target.posToString(), tile.Name)
 
-		m, exists := level.Monsters[target]
-		if exists {
-			fmt.Println(m.monsterToString())
-			fmt.Println(m.Path)
+			m, exists := level.Monsters[target]
+			if exists {
+				fmt.Println(m.monsterToString())
+				fmt.Println(m.Path)
+			}
 		}
 	case CloseWindow:
 		close(input.LevelChan)
@@ -497,40 +503,43 @@ func (e *Entity) dist(p Pos) int {
 func (g *Game) Run() {
 	fmt.Println("Starting...")
 
-	g.CurrentLevel.lineOfSight()
-
 	for _, lchan := range g.LevelChans {
 		lchan <- g.CurrentLevel
 	}
 
-	count := 1
-	for _, m := range g.CurrentLevel.Monsters {
-		m.Name = m.Name + " " + fmt.Sprint(count)
-		count++
-	}
+	g.CurrentLevel.lineOfSight()
+
+	// count := 1
+	// for _, m := range g.CurrentLevel.Monsters {
+	fmt.Println("naming monsters")
+	// 	m.Name = m.Name + " " + fmt.Sprint(count)
+	// 	count++
+	// }
 
 	for input := range g.InputChan {
+		fmt.Println(input)
 		if input.Type == QuitGame {
 			return
 		}
-		g.CurrentLevel.Debug = map[Pos]bool{}
+		//g.CurrentLevel.Debug = map[Pos]bool{}
 
 		if g.CurrentLevel.Player.Alive {
 			for _, monster := range g.CurrentLevel.Monsters {
 				if monster.isPlayerInRange(g.CurrentLevel) {
-					fmt.Println(monster.Name)
-					fmt.Println("---------")
 					monster.Update(g.CurrentLevel)
 				}
 			}
 
+			fmt.Println("handle input ", input)
 			g.handleInput(input)
 		}
 
 		if len(g.LevelChans) == 0 {
 			return
 		}
+
 		for _, lchan := range g.LevelChans {
+			fmt.Println("sending level chan")
 			lchan <- g.CurrentLevel
 		}
 		g.CurrentLevel.Player.AP += g.CurrentLevel.Player.Speed

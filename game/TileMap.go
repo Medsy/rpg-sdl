@@ -17,6 +17,7 @@ const (
 	DirtFloor    rune = '.'
 	ClosedDoor   rune = '|'
 	OpenDoor     rune = '/'
+	GlassBlock	 rune = 'G'
 	Rat          rune = 'R'
 	Spider       rune = 'S'
 	Water        rune = '~'
@@ -57,6 +58,13 @@ func (l *Level) LoadTileMap() {
 			Cost:     1,
 		},
 		{
+			Name:     "Glass Block",
+			Type:     "Glass",
+			Rune:     GlassBlock,
+			HasFloor: true,
+			Cost:     1,
+		},
+		{
 			Name:     "Upstairs",
 			Type:     "Upstairs",
 			Rune:     UpStairs,
@@ -91,5 +99,9 @@ func (l *Level) LoadTileMap() {
 }
 
 func (l *Level) TileAtPos(pos Pos) *Tile {
-	return &l.Level[pos.Y][pos.X]
+	// TODO: hold x y max on level
+	if (pos.Y <= len(l.Level) || pos.X <= len(l.Level)) && (pos.X >= 0 || pos.Y >= 0) {
+		return &l.Level[pos.Y][pos.X]
+	}
+	return &Tile{Type: "Empty"}
 }
